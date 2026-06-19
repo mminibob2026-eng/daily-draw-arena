@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
@@ -20,11 +20,13 @@ export default function SubmitPage({
   const [file, setFile] = useState<File | null>(null)
   const [preview, setPreview] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
+  const [evaluating, setEvaluating] = useState(false)
   const [checking, setChecking] = useState(true)
   const { user, profile } = useAuth()
   const router = useRouter()
   const supabase = createClient()
   const { toast } = useToast()
+  const evaluationDoneRef = useRef(false)
 
   useEffect(() => {
     params.then(({ challengeId }) => setChallengeId(challengeId))
@@ -92,11 +94,40 @@ export default function SubmitPage({
     setPreview(URL.createObjectURL(selected))
   }
 
+  const triggerEvaluation = async (submissionId: string) => {
+    try {
+      const response = await fetch('/api/evaluations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ submissionId }),
+      })
+
+      if (!response.ok) {
+        throw new Error('Evaluation failed')
+      }
+
+      const { evaluation } = await response.json()
+      
+      toast({
+        title: 'Evaluation complete!',
+        description: `Final score: ${evaluation.finalScore.toFixed(1)}/100`,
+      })
+    } catch (error) {
+      console.error('Evaluation error:', error)
+      toast({
+        title: 'Evaluation pending',
+        description: 'Your drawing has been submitted. AI evaluation will complete shortly.',
+      })
+    }
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!file || !user || !challengeId) return
+    if (evaluationDoneRef.current) return
 
     setUploading(true)
+    evaluationDoneRef.current = true
 
     try {
       const fileExt = file.name.split('.').pop()
@@ -105,7 +136,7 @@ export default function SubmitPage({
 
       const { error: uploadError } = await supabase.storage
         .from('submissions')
-        .upload(filePath, file, {
+        .upload(fileName, file, {
           cacheControl: '3600',
           upsert: false,
         })
@@ -116,9 +147,9 @@ export default function SubmitPage({
 
       const { data: { publicUrl } } = supabase.storage
         .from('submissions')
-        .getPublicUrl(filePath)
+        .getPublicUrl(fileName)
 
-      const { error: submissionError } = await supabase
+      const { data: submission, error: submissionError } = await supabase
         .from('submissions')
         .insert({
           user_id: user.id,
@@ -126,19 +157,25 @@ export default function SubmitPage({
           image_url: publicUrl,
           image_storage_path: filePath,
         })
+        .select()
+        .single()
 
       if (submissionError) {
         throw submissionError
       }
 
+      setEvaluating(true)
       toast({
         title: 'Submission received!',
-        description: 'Your drawing is being evaluated by AI.',
+        description: 'Your drawing is being evaluated by AI...',
       })
+
+      await triggerEvaluation(submission.id)
 
       router.push(`/challenges/${challengeId}`)
       router.refresh()
     } catch (error: any) {
+      evaluationDoneRef.current = false
       toast({
         title: 'Upload failed',
         description: error.message || 'Something went wrong. Please try again.',
@@ -205,7 +242,7 @@ export default function SubmitPage({
                       <img
                         src={preview}
                         alt="Preview"
-                        className="max-h-64 mx-auto rounded-lg"
+                        className="max-h-64 mx-auto rounded-lg object-contain"
                       />
                       <Button
                         type="button"
@@ -251,10 +288,10 @@ export default function SubmitPage({
               <div className="flex gap-4">
                 <Button
                   type="submit"
-                  disabled={!file || uploading}
+                  disabled={!file || uploading || evaluating}
                   className="flex-1"
                 >
-                  {uploading ? 'Uploading...' : 'Submit Drawing'}
+                  {uploading ? 'Uploading...' : evaluating ? 'Evaluating...' : 'Submit Drawing'}
                 </Button>
                 <Link href={`/challenges/${challengeId}`}>
                   <Button type="button" variant="outline">

@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from 'next/font/google'
 import './globals.css'
 import { AuthProvider } from '@/contexts/auth-context'
 import { Navigation } from '@/components/layout/navigation'
+import { ToastContainer } from '@/components/toast'
 
 const geistSans = Geist({
   variable: '--font-geist-sans',
@@ -38,6 +39,7 @@ export default function RootLayout({
               Daily Draw Arena — Challenge yourself every day
             </div>
           </footer>
+          <ToastContainer />
         </AuthProvider>
       </body>
     </html>
