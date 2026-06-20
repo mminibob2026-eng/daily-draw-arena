@@ -49,6 +49,11 @@ export default async function ProfilePage() {
                 <Link href="/profile/edit">
                   <Button variant="outline" size="sm">Edit Profile</Button>
                 </Link>
+                {profile?.is_dev_account && (
+                  <Link href="/admin/challenges">
+                    <Button variant="outline" size="sm">Challenges</Button>
+                  </Link>
+                )}
                 {profile?.is_premium ? (
                   <Badge variant="warning">Premium</Badge>
                 ) : (
