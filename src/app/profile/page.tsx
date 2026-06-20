@@ -51,12 +51,12 @@ export default async function ProfilePage() {
                 </Link>
                 {profile?.is_dev_account && (
                   <Link href="/admin/challenges">
-                    <Button variant="outline" size="sm">Challenges</Button>
+                    <Badge variant="secondary">Dev</Badge>
                   </Link>
                 )}
                 {profile?.is_premium ? (
                   <Badge variant="warning">Premium</Badge>
-                ) : (
+                ) : profile?.is_dev_account ? null : (
                   <Link href="/premium">
                     <Button variant="outline" size="sm">Upgrade</Button>
                   </Link>

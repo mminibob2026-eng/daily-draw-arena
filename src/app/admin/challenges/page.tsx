@@ -1,78 +1,50 @@
-'use client'
-
-import { useState, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
+import { createClient } from '@/lib/supabase/server'
+import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Input } from '@/components/ui/input'
+import { CHALLENGE_BANK } from '@/lib/challenges'
 
-interface Challenge {
-  id: number
-  title: string
-  description: string
-  used: boolean
-  lastUsed: string | null
-  usageCount: number
-}
+export default async function AdminChallengesPage() {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
 
-export default function AdminChallengesPage() {
-  const [challenges, setChallenges] = useState<Challenge[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
-  const [search, setSearch] = useState('')
-  const [filter, setFilter] = useState<'all' | 'used' | 'available'>('all')
-  const router = useRouter()
-
-  useEffect(() => {
-    fetchChallenges()
-  }, [])
-
-  const fetchChallenges = async () => {
-    try {
-      const response = await fetch('/api/admin/challenges')
-      const data = await response.json()
-      
-      if (data.error) {
-        setError(data.error)
-      } else {
-        setChallenges(data.challenges)
-      }
-    } catch (err) {
-      setError('Failed to load challenges')
-    }
-    setLoading(false)
-  }
-
-  const filteredChallenges = challenges.filter(c => {
-    const matchesSearch = c.title.toLowerCase().includes(search.toLowerCase()) ||
-                         c.description.toLowerCase().includes(search.toLowerCase())
-    const matchesFilter = filter === 'all' || 
-                         (filter === 'used' && c.used) || 
-                         (filter === 'available' && !c.used)
-    return matchesSearch && matchesFilter
-  })
-
-  if (loading) {
-    return (
-      <div className="container py-8">
-        <div className="max-w-4xl mx-auto text-center py-12">
-          <p className="text-muted-foreground">Loading...</p>
-        </div>
-      </div>
-    )
-  }
-
-  if (error) {
+  if (!user) {
     return (
       <div className="container py-8">
         <div className="max-w-4xl mx-auto">
           <Card>
             <CardContent className="py-12 text-center">
-              <p className="text-destructive mb-4">{error}</p>
+              <p className="text-destructive mb-4">Unauthorized</p>
               <p className="text-sm text-muted-foreground mb-4">
-                This page is only accessible to dev accounts.
+                You must be logged in to view this page.
+              </p>
+              <Link href="/login">
+                <Button>Sign In</Button>
+              </Link>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    )
+  }
+
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('is_dev_account')
+    .eq('id', user.id)
+    .single()
+
+  if (!profile?.is_dev_account) {
+    return (
+      <div className="container py-8">
+        <div className="max-w-4xl mx-auto">
+          <Card>
+            <CardContent className="py-12 text-center">
+              <p className="text-destructive mb-4">Access Denied</p>
+              <p className="text-sm text-muted-foreground mb-4">
+                This page is only for dev accounts.
               </p>
               <Link href="/">
                 <Button>Go Home</Button>
@@ -83,6 +55,24 @@ export default function AdminChallengesPage() {
       </div>
     )
   }
+
+  const { data: usedChallenges } = await supabase
+    .from('daily_challenges')
+    .select('title, challenge_date')
+
+  const usedTitles = new Set(usedChallenges?.map(c => c.title) || [])
+
+  const challenges = CHALLENGE_BANK.map((c, i) => {
+    const usages = usedChallenges?.filter(u => u.title === c.title) || []
+    return {
+      id: i + 1,
+      title: c.title,
+      description: c.description,
+      used: usedTitles.has(c.title),
+      lastUsed: usages.length > 0 ? usages[usages.length - 1].challenge_date : null,
+      usageCount: usages.length,
+    }
+  })
 
   const stats = {
     total: challenges.length,
@@ -97,9 +87,12 @@ export default function AdminChallengesPage() {
           <Link href="/profile" className="text-sm text-muted-foreground hover:text-foreground mb-4 inline-block">
             ← Back to Profile
           </Link>
-          <h1 className="text-3xl font-bold mb-2">Challenge Bank</h1>
-          <p className="text-muted-foreground">
-            Review all 100 approved challenge subjects
+          <div className="flex items-center gap-3">
+            <h1 className="text-3xl font-bold">Challenge Bank</h1>
+            <Badge variant="secondary">Dev Only</Badge>
+          </div>
+          <p className="text-muted-foreground mt-1">
+            Review all {CHALLENGE_BANK.length} approved challenge subjects
           </p>
         </div>
 
@@ -124,44 +117,16 @@ export default function AdminChallengesPage() {
           </Card>
         </div>
 
-        <Card className="mb-6">
-          <CardContent className="py-4">
-            <div className="flex gap-4 items-center">
-              <Input
-                placeholder="Search challenges..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="max-w-xs"
-              />
-              <div className="flex gap-2">
-                <Button
-                  variant={filter === 'all' ? 'primary' : 'outline'}
-                  size="sm"
-                  onClick={() => setFilter('all')}
-                >
-                  All ({stats.total})
-                </Button>
-                <Button
-                  variant={filter === 'used' ? 'primary' : 'outline'}
-                  size="sm"
-                  onClick={() => setFilter('used')}
-                >
-                  Used ({stats.used})
-                </Button>
-                <Button
-                  variant={filter === 'available' ? 'primary' : 'outline'}
-                  size="sm"
-                  onClick={() => setFilter('available')}
-                >
-                  Available ({stats.available})
-                </Button>
-              </div>
-            </div>
+        <Card>
+          <CardContent className="py-4 text-center">
+            <p className="text-sm text-muted-foreground">
+              {stats.used} challenges have been used and won&apos;t repeat for 30 days per user
+            </p>
           </CardContent>
         </Card>
 
-        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredChallenges.map((challenge) => (
+        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4 mt-6">
+          {challenges.map((challenge) => (
             <Card 
               key={challenge.id} 
               className={challenge.used ? 'opacity-75' : 'border-success/30'}
@@ -192,14 +157,6 @@ export default function AdminChallengesPage() {
             </Card>
           ))}
         </div>
-
-        {filteredChallenges.length === 0 && (
-          <Card>
-            <CardContent className="py-12 text-center">
-              <p className="text-muted-foreground">No challenges match your search.</p>
-            </CardContent>
-          </Card>
-        )}
       </div>
     </div>
   )
