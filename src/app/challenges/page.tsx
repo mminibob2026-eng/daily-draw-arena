@@ -58,7 +58,7 @@ export default async function ChallengesPage() {
                 </p>
                 <Link href={`/challenges/${challenge.id}`} className="block">
                   <Button className="w-full group-hover:animate-pulse-glow">
-                    View Challenge
+                    Submit Drawing
                   </Button>
                 </Link>
               </CardContent>

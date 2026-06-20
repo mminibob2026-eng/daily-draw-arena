@@ -45,13 +45,18 @@ export default async function ProfilePage() {
                   <p className="text-sm text-muted-foreground">{user.email}</p>
                 </div>
               </div>
-              {profile?.is_premium ? (
-                <Badge variant="warning">Premium</Badge>
-              ) : (
-                <Link href="/premium">
-                  <Button variant="outline" size="sm">Upgrade to Premium</Button>
+              <div className="flex items-center gap-2">
+                <Link href="/profile/edit">
+                  <Button variant="outline" size="sm">Edit Profile</Button>
                 </Link>
-              )}
+                {profile?.is_premium ? (
+                  <Badge variant="warning">Premium</Badge>
+                ) : (
+                  <Link href="/premium">
+                    <Button variant="outline" size="sm">Upgrade</Button>
+                  </Link>
+                )}
+              </div>
             </div>
           </CardHeader>
           <CardContent>
