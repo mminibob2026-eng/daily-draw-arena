@@ -9,11 +9,22 @@ export default async function ChallengesPage() {
   const supabase = await createClient()
   const today = getChallengeDate()
 
+  const { data: { user } } = await supabase.auth.getUser()
+
   const { data: challenges } = await supabase
     .from('daily_challenges')
     .select('*')
     .eq('challenge_date', today)
     .order('slot')
+
+  const { data: userSubmissions } = user
+    ? await supabase
+        .from('submissions')
+        .select('challenge_id')
+        .eq('user_id', user.id)
+    : { data: [] }
+
+  const submittedChallengeIds = new Set(userSubmissions?.map(s => s.challenge_id) || [])
 
   return (
     <div className="container py-8">
@@ -21,7 +32,7 @@ export default async function ChallengesPage() {
         <div>
           <h1 className="text-3xl font-bold">Today&apos;s Challenges</h1>
           <p className="text-muted-foreground mt-1">
-            Choose a challenge and create your masterpiece
+            {user ? "Choose a challenge and create your masterpiece" : "Sign in to start drawing!"}
           </p>
         </div>
         <Badge variant="outline" className="text-sm">
@@ -42,43 +53,78 @@ export default async function ChallengesPage() {
         </Card>
       ) : (
         <div className="grid md:grid-cols-3 gap-6 max-w-5xl mx-auto">
-          {challenges.map((challenge, index) => (
-            <Card key={challenge.id} className="group hover:shadow-lg transition-all duration-200 hover:border-primary/50">
-              <CardHeader>
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
-                    <span className="text-primary font-bold">{index + 1}</span>
-                  </div>
-                  <CardTitle className="text-xl">{challenge.title}</CardTitle>
+          {challenges.map((challenge, index) => {
+            const hasSubmitted = submittedChallengeIds.has(challenge.id)
+            
+            return (
+              <Card key={challenge.id} className="group hover:shadow-lg transition-all duration-200 hover:border-primary/50 overflow-hidden">
+                <div className="aspect-[4/3] bg-gradient-to-br from-primary/5 to-accent/5 flex items-center justify-center">
+                  <span className="text-6xl opacity-50">
+                    {index === 0 ? '☕' : index === 1 ? '🧚' : '👜'}
+                  </span>
                 </div>
-              </CardHeader>
-              <CardContent>
-                <p className="text-muted-foreground mb-6">
-                  {challenge.description}
-                </p>
-                <Link href={`/challenges/${challenge.id}`} className="block">
-                  <Button className="w-full group-hover:animate-pulse-glow">
-                    Submit Drawing
-                  </Button>
-                </Link>
-              </CardContent>
-            </Card>
-          ))}
+                <CardHeader>
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                      <span className="text-primary font-bold text-sm">{index + 1}</span>
+                    </div>
+                    <CardTitle className="text-lg">{challenge.title}</CardTitle>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-muted-foreground text-sm mb-4">
+                    {challenge.description}
+                  </p>
+                  
+                  {hasSubmitted ? (
+                    <div className="flex items-center gap-2 text-success text-sm">
+                      <span>✓</span>
+                      <span>Submitted</span>
+                    </div>
+                  ) : user ? (
+                    <Link href={`/submit/${challenge.id}`} className="block">
+                      <Button className="w-full bg-primary hover:bg-primary/90">
+                        🎨 Submit Drawing
+                      </Button>
+                    </Link>
+                  ) : (
+                    <Link href="/login" className="block">
+                      <Button variant="outline" className="w-full">
+                        Sign In to Submit
+                      </Button>
+                    </Link>
+                  )}
+                </CardContent>
+              </Card>
+            )
+          })}
         </div>
       )}
 
       <div className="mt-12 max-w-2xl mx-auto">
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg">Past Challenges</CardTitle>
+            <CardTitle className="text-lg">How to Participate</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-muted-foreground text-sm">
-              Historical challenges are available for viewing but submissions are closed.
-            </p>
-            <Link href="/leaderboard" className="inline-block mt-4">
-              <Button variant="outline" size="sm">View Leaderboard</Button>
-            </Link>
+            <ol className="text-sm text-muted-foreground space-y-2">
+              <li className="flex items-start gap-2">
+                <span className="font-bold text-foreground">1.</span>
+                <span>Choose a challenge that inspires you</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="font-bold text-foreground">2.</span>
+                <span>Create your artwork (any medium, any style)</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="font-bold text-foreground">3.</span>
+                <span>Upload and get AI feedback on creativity, storytelling, and more</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="font-bold text-foreground">4.</span>
+                <span>Compete on the daily leaderboard!</span>
+              </li>
+            </ol>
           </CardContent>
         </Card>
       </div>
