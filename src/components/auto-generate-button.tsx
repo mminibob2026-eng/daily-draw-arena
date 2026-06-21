@@ -1,7 +1,9 @@
 'use client'
 
 import { useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
+import { useToast } from '@/hooks/use-toast'
 
 interface AutoGenerateButtonProps {
   date: string
@@ -9,24 +11,48 @@ interface AutoGenerateButtonProps {
 
 export function AutoGenerateButton({ date }: AutoGenerateButtonProps) {
   const [loading, setLoading] = useState(false)
+  const router = useRouter()
+  const { toast } = useToast()
 
   async function handleGenerate() {
     setLoading(true)
     try {
-      const res = await fetch('/api/challenges/generate', {
+      // Use public-generate endpoint that works for anyone
+      const res = await fetch('/api/challenges/public-generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ date }),
       })
-      
+
+      const data = await res.json()
+
       if (res.ok) {
-        window.location.reload()
-      } else {
-        const data = await res.json()
-        alert(data.error || 'Failed to generate challenges')
+        if (data.alreadyExists) {
+          toast({
+            title: 'Challenges already exist',
+            description: 'Refreshing...',
+          })
+        } else {
+          toast({
+            title: 'Generated successfully!',
+            description: `${data.count} challenges created for today.`,
+          })
+        }
+        router.refresh()
+        return
       }
-    } catch {
-      alert('Failed to generate challenges')
+
+      toast({
+        title: 'Failed to generate',
+        description: data.error || 'Unknown error',
+        variant: 'destructive',
+      })
+    } catch (err) {
+      console.error('Generate error:', err)
+      toast({
+        title: 'Failed to generate',
+        description: 'Please try again or check your connection.',
+        variant: 'destructive',
+      })
     } finally {
       setLoading(false)
     }
