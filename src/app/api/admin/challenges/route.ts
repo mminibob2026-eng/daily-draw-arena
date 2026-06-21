@@ -33,6 +33,30 @@ export async function GET(request: NextRequest) {
 
     const offset = (page - 1) * limit
 
+    // Fetch ALL challenge bank entries for accurate stats (no pagination)
+    const { data: allChallenges, error: allError } = await supabase
+      .from('challenge_bank')
+      .select('id, title, is_enabled')
+
+    if (allError) {
+      return NextResponse.json({ error: allError.message }, { status: 500 })
+    }
+
+    // Calculate stats from full dataset
+    const totalCount = allChallenges?.length || 0
+    const disabledCount = allChallenges?.filter(c => !c.is_enabled).length || 0
+    const enabledCount = totalCount - disabledCount
+
+    // Fetch used titles
+    const { data: usedChallenges } = await supabase
+      .from('daily_challenges')
+      .select('title, challenge_date')
+
+    const usedTitles = new Set(usedChallenges?.map(c => c.title) || [])
+    const usedCount = allChallenges?.filter(c => usedTitles.has(c.title)).length || 0
+    const availableCount = enabledCount - usedCount
+
+    // Now fetch paginated data
     let query = supabase
       .from('challenge_bank')
       .select('*', { count: 'exact' })
@@ -49,12 +73,6 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 500 })
     }
 
-    const { data: usedChallenges } = await supabase
-      .from('daily_challenges')
-      .select('title, challenge_date')
-
-    const usedTitles = new Set(usedChallenges?.map(c => c.title) || [])
-
     let challenges = challengeBank?.map(c => {
       const usages = usedChallenges?.filter(u => u.title === c.title) || []
       return {
@@ -65,6 +83,7 @@ export async function GET(request: NextRequest) {
       }
     }) || []
 
+    // Apply filter on paginated results
     if (filter === 'enabled') {
       challenges = challenges.filter(c => c.is_enabled && !c.used)
     } else if (filter === 'disabled') {
@@ -73,23 +92,81 @@ export async function GET(request: NextRequest) {
       challenges = challenges.filter(c => c.used)
     }
 
-    const totalCount = count || 0
-    const totalPages = Math.ceil(totalCount / limit)
+    // Get count for filtered results
+    let filteredCount = count || 0
+    if (filter !== 'all' || search) {
+      // Re-query for accurate filtered count if filter/search is applied
+      let countQuery = supabase
+        .from('challenge_bank')
+        .select('*', { count: 'exact', head: true })
+      
+      if (search) {
+        countQuery = countQuery.or(`title.ilike.%${search}%,description.ilike.%${search}%`)
+      }
+
+      if (filter === 'enabled' || filter === 'disabled' || filter === 'used') {
+        if (filter === 'disabled') {
+          countQuery = countQuery.eq('is_enabled', false)
+        } else if (filter === 'enabled') {
+          countQuery = countQuery.eq('is_enabled', true)
+        }
+      }
+
+      const { count: accurateCount } = await countQuery
+      filteredCount = accurateCount || 0
+
+      // For "used" filter we still need to count post-filter
+      if (filter === 'used') {
+        const { data: usedFiltered } = await supabase
+          .from('challenge_bank')
+          .select('id, title')
+        
+        if (search) {
+          // Apply search filter manually
+          const { data: searchedData } = await supabase
+            .from('challenge_bank')
+            .select('id, title')
+            .or(`title.ilike.%${search}%,description.ilike.%${search}%`)
+          filteredCount = searchedData?.filter(c => usedTitles.has(c.title)).length || 0
+        } else {
+          filteredCount = usedFiltered?.filter(c => usedTitles.has(c.title)).length || 0
+        }
+      } else if (filter === 'enabled') {
+        // Need to subtract used from enabled count
+        const { data: enabledData } = await supabase
+          .from('challenge_bank')
+          .select('id, title, is_enabled')
+          .eq('is_enabled', true)
+        
+        if (search) {
+          const { data: searchedEnabled } = await supabase
+            .from('challenge_bank')
+            .select('id, title, is_enabled')
+            .eq('is_enabled', true)
+            .or(`title.ilike.%${search}%,description.ilike.%${search}%`)
+          filteredCount = searchedEnabled?.filter(c => !usedTitles.has(c.title)).length || 0
+        } else {
+          filteredCount = enabledData?.filter(c => !usedTitles.has(c.title)).length || 0
+        }
+      }
+    }
+
+    const totalPages = Math.ceil(filteredCount / limit)
 
     return NextResponse.json({ 
       challenges,
       pagination: {
         page,
         limit,
-        total: totalCount,
+        total: filteredCount,
         totalPages,
         hasMore: page < totalPages,
       },
       stats: {
         total: totalCount,
-        used: challenges.filter(c => c.used).length,
-        available: challenges.filter(c => !c.used && c.is_enabled).length,
-        disabled: challenges.filter(c => !c.is_enabled).length,
+        used: usedCount,
+        available: availableCount,
+        disabled: disabledCount,
       }
     })
   } catch (error: unknown) {

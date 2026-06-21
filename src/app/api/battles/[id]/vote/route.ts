@@ -33,19 +33,39 @@ export async function POST(
       }
 
       const oldVote = existingVote.vote_for
-      await supabase
+      const oldColumn = oldVote === 'human' ? 'human_votes' : 'ai_votes'
+      const newColumn = voteFor === 'human' ? 'human_votes' : 'ai_votes'
+
+      const { data: currentBattle } = await supabase
         .from('ai_battles')
-        .update({
-          [oldVote === 'human' ? 'human_votes' : 'ai_votes']: 
-            supabase.rpc('decrement', { x: 1 }),
-        })
+        .select('human_votes, ai_votes')
         .eq('id', battleId)
+        .single()
+
+      if (currentBattle) {
+        const oldCount = currentBattle[oldColumn] || 0
+        const newCount = currentBattle[newColumn] || 0
+
+        await supabase
+          .from('ai_battles')
+          .update({
+            [oldColumn]: Math.max(0, oldCount - 1),
+            [newColumn]: newCount + 1,
+          })
+          .eq('id', battleId)
+      }
 
       await supabase
         .from('votes')
         .update({ vote_for: voteFor })
         .eq('id', existingVote.id)
     } else {
+      const { data: currentBattle } = await supabase
+        .from('ai_battles')
+        .select('human_votes, ai_votes')
+        .eq('id', battleId)
+        .single()
+
       await supabase
         .from('votes')
         .insert({
@@ -54,13 +74,15 @@ export async function POST(
           vote_for: voteFor,
         })
 
-      await supabase
-        .from('ai_battles')
-        .update({
-          [voteFor === 'human' ? 'human_votes' : 'ai_votes']: 
-            supabase.rpc('increment', { x: 1 }),
-        })
-        .eq('id', battleId)
+      if (currentBattle) {
+        const column = voteFor === 'human' ? 'human_votes' : 'ai_votes'
+        const currentCount = currentBattle[column] || 0
+
+        await supabase
+          .from('ai_battles')
+          .update({ [column]: currentCount + 1 })
+          .eq('id', battleId)
+      }
     }
 
     const { data: battle } = await supabase

@@ -11,15 +11,14 @@ async function isDevAccount(supabase: any, userId: string): Promise<boolean> {
   return profile?.is_dev_account === true
 }
 
-function getAvailableChallenges(thirtyDaysAgoStr: string, usedTitles: Set<string>) {
-  let available = CHALLENGE_BANK.filter(c => !usedTitles.has(c.title))
-  if (available.length < 3) {
-    available = [...CHALLENGE_BANK]
-  }
-  return available
+interface BankChallenge {
+  id: string
+  title: string
+  description: string
+  is_enabled: boolean
 }
 
-function selectChallenges(available: typeof CHALLENGE_BANK, targetDate: string, count: number = 3) {
+function selectChallenges(available: BankChallenge[], targetDate: string, count: number = 3): BankChallenge[] {
   const seed = targetDate.split('-').reduce((acc: number, val: string) => acc + parseInt(val), 0)
   const shuffled = [...available].sort((a, b) => {
     const seedA = (seed * a.title.length) % available.length
@@ -27,6 +26,25 @@ function selectChallenges(available: typeof CHALLENGE_BANK, targetDate: string, 
     return seedA - seedB
   })
   return shuffled.slice(0, count)
+}
+
+async function getEnabledChallenges(supabase: any): Promise<BankChallenge[]> {
+  const { data, error } = await supabase
+    .from('challenge_bank')
+    .select('id, title, description, is_enabled')
+    .eq('is_enabled', true)
+
+  if (error || !data || data.length === 0) {
+    console.warn('No enabled challenges in database, falling back to static CHALLENGE_BANK')
+    return CHALLENGE_BANK.map((c, i) => ({
+      id: `static-${i}`,
+      title: c.title,
+      description: c.description,
+      is_enabled: true,
+    }))
+  }
+
+  return data
 }
 
 async function generateChallengesForDate(supabase: any, targetDate: string, userId?: string) {
@@ -41,9 +59,16 @@ async function generateChallengesForDate(supabase: any, targetDate: string, user
 
   const recentTitles = recentHistory?.map((h: { challenge_title: string }) => h.challenge_title) || []
   const usedTitles: Set<string> = new Set(recentTitles)
-  const availableChallenges = getAvailableChallenges(thirtyDaysAgoStr, usedTitles)
-  const selectedChallenges = selectChallenges(availableChallenges, targetDate)
 
+  // Use challenge_bank database table as source of truth
+  const allEnabledChallenges = await getEnabledChallenges(supabase)
+
+  let availableChallenges = allEnabledChallenges.filter(c => !usedTitles.has(c.title))
+  if (availableChallenges.length < 3) {
+    availableChallenges = allEnabledChallenges
+  }
+
+  const selectedChallenges = selectChallenges(availableChallenges, targetDate)
   const insertedChallenges = []
 
   for (let i = 0; i < selectedChallenges.length; i++) {
@@ -169,13 +194,25 @@ export async function GET(request: NextRequest) {
       .select('challenge_title')
       .gte('shown_at', thirtyDaysAgoStr)
 
-    const usedTitles = new Set(recentHistory?.map(h => h.challenge_title) || [])
-    const availableChallenges = CHALLENGE_BANK.filter(c => !usedTitles.has(c.title))
+    const usedTitles = new Set(recentHistory?.map((h: { challenge_title: string }) => h.challenge_title) || [])
+
+    // Count from database, not static array
+    const { count: totalEnabled } = await supabase
+      .from('challenge_bank')
+      .select('*', { count: 'exact', head: true })
+      .eq('is_enabled', true)
+
+    const { data: allEnabled } = await supabase
+      .from('challenge_bank')
+      .select('title')
+      .eq('is_enabled', true)
+
+    const availableCount = allEnabled?.filter(c => !usedTitles.has(c.title)).length || 0
 
     return NextResponse.json({
       schedule: result,
-      availableChallenges: availableChallenges.length,
-      totalChallenges: CHALLENGE_BANK.length,
+      availableChallenges: availableCount,
+      totalChallenges: totalEnabled || 0,
     })
   } catch (error: unknown) {
     return NextResponse.json({ error: error instanceof Error ? error.message : 'Unknown error' }, { status: 500 })

@@ -130,39 +130,33 @@ export default function SubmitPage({
     evaluationDoneRef.current = true
 
     try {
-      const fileExt = file.name.split('.').pop()
-      const fileName = `${user.id}/${challengeId}/${Date.now()}.${fileExt}`
-      const filePath = `submissions/${fileName}`
+      // Use server-side API for race-safe submission
+      const formData = new FormData()
+      formData.append('file', file)
+      formData.append('challengeId', challengeId)
 
-      const { error: uploadError } = await supabase.storage
-        .from('submissions')
-        .upload(fileName, file, {
-          cacheControl: '3600',
-          upsert: false,
-        })
+      const response = await fetch('/api/submissions', {
+        method: 'POST',
+        body: formData,
+      })
 
-      if (uploadError) {
-        throw uploadError
+      const data = await response.json()
+
+      if (!response.ok) {
+        // Handle 409 conflict (already submitted)
+        if (response.status === 409) {
+          toast({
+            title: 'Already submitted',
+            description: data.error || 'You have already submitted to this challenge.',
+            variant: 'destructive',
+          })
+          router.push(`/challenges/${challengeId}`)
+          return
+        }
+        throw new Error(data.error || 'Submission failed')
       }
 
-      const { data: { publicUrl } } = supabase.storage
-        .from('submissions')
-        .getPublicUrl(fileName)
-
-      const { data: submission, error: submissionError } = await supabase
-        .from('submissions')
-        .insert({
-          user_id: user.id,
-          challenge_id: challengeId,
-          image_url: publicUrl,
-          image_storage_path: filePath,
-        })
-        .select()
-        .single()
-
-      if (submissionError) {
-        throw submissionError
-      }
+      const submission = data.submission
 
       setEvaluating(true)
       toast({
@@ -174,11 +168,12 @@ export default function SubmitPage({
 
       router.push(`/challenges/${challengeId}`)
       router.refresh()
-    } catch (error: any) {
+    } catch (error) {
       evaluationDoneRef.current = false
+      const err = error as Error
       toast({
         title: 'Upload failed',
-        description: error.message || 'Something went wrong. Please try again.',
+        description: err.message || 'Something went wrong. Please try again.',
         variant: 'destructive',
       })
       setUploading(false)

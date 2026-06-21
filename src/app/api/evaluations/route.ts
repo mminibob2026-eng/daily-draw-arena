@@ -28,25 +28,42 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Submission not found' }, { status: 404 })
     }
 
+    // Pre-check for existing evaluation (fast path, not race-safe)
     const { data: existingEval } = await supabase
       .from('evaluations')
-      .select('id')
+      .select('id, creativity, storytelling, composition, effort, originality, final_score, strengths, weaknesses, improvements')
       .eq('submission_id', submissionId)
-      .single()
+      .maybeSingle()
 
     if (existingEval) {
-      return NextResponse.json({ error: 'Already evaluated' }, { status: 409 })
+      return NextResponse.json({
+        success: true,
+        evaluation: {
+          creativity: existingEval.creativity,
+          storytelling: existingEval.storytelling,
+          composition: existingEval.composition,
+          effort: existingEval.effort,
+          originality: existingEval.originality,
+          finalScore: existingEval.final_score,
+          strengths: JSON.parse(existingEval.strengths || '[]'),
+          weaknesses: JSON.parse(existingEval.weaknesses || '[]'),
+          improvements: JSON.parse(existingEval.improvements || '[]'),
+        },
+        cached: true,
+      })
     }
 
     const challenge = submission.daily_challenges
 
+    // Analyze drawing BEFORE inserting (to avoid duplicate AI calls on race)
     const { scores, finalScore } = await analyzeDrawing(
       submission.image_url,
       challenge.title,
       challenge.description || ''
     )
 
-    const { error: evalError } = await supabase
+    // Insert with race-safe unique constraint on submission_id
+    const { data: evalData, error: evalError } = await supabase
       .from('evaluations')
       .insert({
         submission_id: submissionId,
@@ -60,8 +77,36 @@ export async function POST(request: NextRequest) {
         weaknesses: JSON.stringify(scores.weaknesses),
         improvements: JSON.stringify(scores.improvements),
       })
+      .select()
+      .single()
 
     if (evalError) {
+      // Race condition caught - another request already inserted
+      if (evalError.code === '23505') {
+        const { data: raceEval } = await supabase
+          .from('evaluations')
+          .select('creativity, storytelling, composition, effort, originality, final_score, strengths, weaknesses, improvements')
+          .eq('submission_id', submissionId)
+          .single()
+
+        if (raceEval) {
+          return NextResponse.json({
+            success: true,
+            evaluation: {
+              creativity: raceEval.creativity,
+              storytelling: raceEval.storytelling,
+              composition: raceEval.composition,
+              effort: raceEval.effort,
+              originality: raceEval.originality,
+              finalScore: raceEval.final_score,
+              strengths: JSON.parse(raceEval.strengths || '[]'),
+              weaknesses: JSON.parse(raceEval.weaknesses || '[]'),
+              improvements: JSON.parse(raceEval.improvements || '[]'),
+            },
+            cached: true,
+          })
+        }
+      }
       console.error('Evaluation insert error:', evalError)
       return NextResponse.json({ error: 'Failed to save evaluation' }, { status: 500 })
     }
@@ -95,11 +140,11 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      evaluation: { scores, finalScore }
+      evaluation: { scores, finalScore, ...evalData },
     })
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Evaluation error:', error)
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    return NextResponse.json({ error: error instanceof Error ? error.message : 'Unknown error' }, { status: 500 })
   }
 }
 

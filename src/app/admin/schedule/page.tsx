@@ -71,24 +71,32 @@ export default function AdminSchedulePage() {
     setSettingChallenge(`${date}-${slot}`)
     try {
       const challenge = CHALLENGE_BANK.find(c => c.title === title)
-      if (!challenge) return
+      if (!challenge) {
+        alert('Challenge not found')
+        return
+      }
 
-      const supabase = (window as any).__SUPABASE__
-      
-      const { error } = await supabase
-        .from('daily_challenges')
-        .insert({
+      const res = await fetch('/api/admin/set-challenge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          date,
+          slot,
           title: challenge.title,
           description: challenge.description,
-          challenge_date: date,
-          slot: slot,
-        })
+        }),
+      })
 
-      if (!error) {
+      const data = await res.json()
+
+      if (res.ok) {
         fetchSchedule()
+      } else {
+        alert(data.error || 'Failed to set challenge')
       }
-    } catch {
-      // handle error
+    } catch (err) {
+      console.error('Set challenge error:', err)
+      alert('Failed to set challenge')
     } finally {
       setSettingChallenge(null)
     }
