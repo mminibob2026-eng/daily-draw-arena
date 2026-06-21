@@ -1,10 +1,10 @@
 import { createClient } from '@/lib/supabase/server'
 import { getChallengeDate } from '@/lib/utils'
+import { getOrCreateDailyChallenges } from '@/lib/daily-challenges'
 import Link from 'next/link'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { AutoGenerateButton } from '@/components/auto-generate-button'
 
 export default async function ChallengesPage() {
   const supabase = await createClient()
@@ -12,19 +12,9 @@ export default async function ChallengesPage() {
 
   const { data: { user } } = await supabase.auth.getUser()
 
-  const { data: profile } = user
-    ? await supabase
-        .from('profiles')
-        .select('is_dev_account')
-        .eq('id', user.id)
-        .single()
-    : { data: null }
-
-  const { data: challenges, count } = await supabase
-    .from('daily_challenges')
-    .select('*', { count: 'exact' })
-    .eq('challenge_date', today)
-    .order('slot')
+  // Deterministically derive today's challenges from the challenge bank.
+  // This creates the rows on first read, so there is no manual "generate" step.
+  const challenges = await getOrCreateDailyChallenges(today)
 
   const { data: userSubmissions } = user
     ? await supabase
@@ -39,22 +29,17 @@ export default async function ChallengesPage() {
     <div className="container py-8">
       <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-3xl font-bold">Today&apos;s Challenges</h1>
+          <h1 className="text-3xl font-bold">Daily Challenges</h1>
           <p className="text-muted-foreground mt-1">
             {user ? "Choose a challenge and create your masterpiece" : "Sign in to start drawing!"}
           </p>
         </div>
-        <div className="flex items-center gap-4">
-          {!challenges?.length && (
-            <AutoGenerateButton date={today} />
-          )}
-          <Badge variant="outline" className="text-sm">
-            Resets at midnight MYT
-          </Badge>
-        </div>
+        <Badge variant="outline" className="text-sm">
+          Resets at midnight MYT
+        </Badge>
       </div>
 
-      {!challenges?.length ? (
+      {challenges.length === 0 ? (
         <Card className="max-w-2xl mx-auto">
           <CardContent className="py-12 text-center">
             <p className="text-muted-foreground mb-4">

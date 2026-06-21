@@ -1,14 +1,9 @@
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { getChallengeDate } from '@/lib/utils'
+import { getOrCreateDailyChallenges } from '@/lib/daily-challenges'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
-
-const fallbackChallenges = [
-  { title: 'Coming Soon', description: 'Today\'s challenges are being generated. Check back shortly!' },
-  { title: 'Coming Soon', description: 'Today\'s challenges are being generated. Check back shortly!' },
-  { title: 'Coming Soon', description: 'Today\'s challenges are being generated. Check back shortly!' },
-]
 
 const features = [
   {
@@ -33,16 +28,8 @@ export default async function Home() {
   const supabase = await createClient()
   const today = getChallengeDate()
 
-  // Fetch live challenges for today
-  const { data: liveChallenges } = await supabase
-    .from('daily_challenges')
-    .select('title, description, slot')
-    .eq('challenge_date', today)
-    .order('slot')
-
-  const challenges = liveChallenges && liveChallenges.length > 0
-    ? liveChallenges
-    : fallbackChallenges
+  // Deterministically derive today's challenges from the challenge bank.
+  const challenges = await getOrCreateDailyChallenges(today)
 
   return (
     <div className="flex flex-col">
@@ -81,7 +68,7 @@ export default async function Home() {
       <section className="py-16 bg-muted/50">
         <div className="container">
           <div className="text-center mb-12">
-            <h2 className="text-2xl sm:text-3xl font-bold mb-4">Today&apos;s Challenges</h2>
+            <h2 className="text-2xl sm:text-3xl font-bold mb-4">Daily Challenges</h2>
             <p className="text-muted-foreground">Three themes, infinite possibilities. Submissions reset at midnight MYT.</p>
           </div>
           <div className="grid md:grid-cols-3 gap-6 max-w-5xl mx-auto">

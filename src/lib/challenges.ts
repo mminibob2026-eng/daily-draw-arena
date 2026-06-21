@@ -765,3 +765,47 @@ export const CHALLENGE_BANK = [
   { title: 'Banana Split', description: 'Ice cream with all the toppings.' },
   { title: 'Sunday Funday', description: 'The best dessert day.' },
 ]
+
+export interface BankChallenge {
+  id: string
+  title: string
+  description: string
+  is_enabled?: boolean
+}
+
+/**
+ * Deterministically select `count` challenges from the available pool.
+ * The same `targetDate` + pool always produces the same ordering,
+ * so every server/user sees the same daily challenges without needing
+ * a separate coordination step.
+ */
+export function selectDailyChallenges(
+  available: BankChallenge[],
+  targetDate: string,
+  count: number = 3
+): BankChallenge[] {
+  if (available.length === 0) {
+    return []
+  }
+
+  // Deterministic seed from the date string (YYYY-MM-DD)
+  const seed = targetDate.split('-').reduce((acc, val) => acc + parseInt(val, 10), 0)
+
+  // A simple seeded hash for strings so the sort is reproducible.
+  const stringHash = (str: string) => {
+    let hash = seed
+    for (let i = 0; i < str.length; i++) {
+      hash = (hash * 31 + str.charCodeAt(i)) >>> 0
+    }
+    return hash
+  }
+
+  const sorted = [...available].sort((a, b) => {
+    const ha = stringHash(a.title)
+    const hb = stringHash(b.title)
+    if (ha !== hb) return ha - hb
+    return a.title.localeCompare(b.title)
+  })
+
+  return sorted.slice(0, count)
+}
