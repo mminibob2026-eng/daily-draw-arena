@@ -116,6 +116,11 @@ export async function POST(request: NextRequest) {
 
 export async function GET(request: NextRequest) {
   try {
+    // Trigger battle closing in the background.
+    // Vercel Hobby does not support sub-daily crons, so we close expired
+    // battles on-demand whenever the battles list is fetched.
+    triggerBattleClosing(request)
+
     const supabase = await createClient()
     const searchParams = request.nextUrl.searchParams
     const status = searchParams.get('status') || 'voting'
@@ -158,5 +163,25 @@ export async function GET(request: NextRequest) {
   } catch (error: any) {
     console.error('Battles error:', error)
     return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+/**
+ * Fire-and-forget trigger for the background battle-closer.
+ * Never blocks the battles response.
+ */
+function triggerBattleClosing(request: NextRequest) {
+  try {
+    const origin = new URL(request.url).origin
+    const cronSecret = process.env.CRON_SECRET || 'dev_secret'
+
+    fetch(`${origin}/api/cron/close-battles`, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${cronSecret}` },
+    }).catch((err) => {
+      console.error('Failed to trigger battle closing:', err)
+    })
+  } catch (e) {
+    console.error('Failed to trigger battle closing:', e)
   }
 }

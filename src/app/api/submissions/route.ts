@@ -142,6 +142,11 @@ export async function POST(request: NextRequest) {
         improvements: '[]',
       })
 
+    // Trigger evaluation processing in the background.
+    // Vercel Hobby does not support sub-daily crons, so we drive the queue
+    // on-demand after each submission instead of relying on /api/cron/process-evaluations.
+    triggerEvaluationProcessing(request)
+
     // Update submission count and streak
     const today = new Date().toISOString().split('T')[0]
     const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0]
@@ -168,5 +173,25 @@ export async function POST(request: NextRequest) {
   } catch (error: unknown) {
     console.error('Submission error:', error)
     return NextResponse.json({ error: error instanceof Error ? error.message : 'Unknown error' }, { status: 500 })
+  }
+}
+
+/**
+ * Fire-and-forget trigger for the background evaluation processor.
+ * Never blocks the submission response.
+ */
+function triggerEvaluationProcessing(request: NextRequest) {
+  try {
+    const origin = new URL(request.url).origin
+    const cronSecret = process.env.CRON_SECRET || 'dev_secret'
+
+    fetch(`${origin}/api/cron/process-evaluations`, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${cronSecret}` },
+    }).catch((err) => {
+      console.error('Failed to trigger evaluation processing:', err)
+    })
+  } catch (e) {
+    console.error('Failed to trigger evaluation processing:', e)
   }
 }
