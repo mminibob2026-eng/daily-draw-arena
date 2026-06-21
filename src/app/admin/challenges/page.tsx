@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import Link from 'next/link'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -34,6 +34,8 @@ export default function AdminChallengesPage() {
   const [error, setError] = useState('')
   const [seeding, setSeeding] = useState(false)
   const [seedingMsg, setSeedingMsg] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
+  const [filter, setFilter] = useState<'all' | 'enabled' | 'disabled' | 'used'>('all')
 
   useEffect(() => {
     async function load() {
@@ -64,6 +66,25 @@ export default function AdminChallengesPage() {
     }
     load()
   }, [])
+
+  const filteredChallenges = useMemo(() => {
+    return challenges.filter(c => {
+      const matchesSearch = searchQuery === '' || 
+        c.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        c.description.toLowerCase().includes(searchQuery.toLowerCase())
+      
+      switch (filter) {
+        case 'enabled':
+          return matchesSearch && c.is_enabled && !c.used
+        case 'disabled':
+          return matchesSearch && !c.is_enabled
+        case 'used':
+          return matchesSearch && c.used
+        default:
+          return matchesSearch
+      }
+    })
+  }, [challenges, searchQuery, filter])
 
   async function handleSeed() {
     setSeeding(true)
@@ -299,6 +320,50 @@ export default function AdminChallengesPage() {
           )}
         </div>
 
+        {stats.total > 0 && (
+          <div className="flex gap-4 mb-6">
+            <Input
+              placeholder="Search challenges..."
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              className="max-w-xs"
+            />
+            <div className="flex gap-2">
+              <Button
+                variant={filter === 'all' ? 'primary' : 'outline'}
+                size="sm"
+                onClick={() => setFilter('all')}
+              >
+                All
+              </Button>
+              <Button
+                variant={filter === 'enabled' ? 'primary' : 'outline'}
+                size="sm"
+                onClick={() => setFilter('enabled')}
+              >
+                Enabled
+              </Button>
+              <Button
+                variant={filter === 'disabled' ? 'primary' : 'outline'}
+                size="sm"
+                onClick={() => setFilter('disabled')}
+              >
+                Disabled
+              </Button>
+              <Button
+                variant={filter === 'used' ? 'primary' : 'outline'}
+                size="sm"
+                onClick={() => setFilter('used')}
+              >
+                Used
+              </Button>
+            </div>
+            <p className="text-sm text-muted-foreground self-center ml-auto">
+              Showing {filteredChallenges.length} of {stats.total}
+            </p>
+          </div>
+        )}
+
         {showAddForm && (
           <Card className="mb-6">
             <CardHeader>
@@ -340,15 +405,19 @@ export default function AdminChallengesPage() {
               <p className="text-muted-foreground">Loading...</p>
             </CardContent>
           </Card>
-        ) : challenges.length === 0 ? (
+        ) : filteredChallenges.length === 0 ? (
           <Card>
             <CardContent className="py-12 text-center">
-              <p className="text-muted-foreground">No challenges in the bank.</p>
+              <p className="text-muted-foreground">
+                {searchQuery || filter !== 'all' 
+                  ? 'No challenges match your filter.' 
+                  : 'No challenges in the bank.'}
+              </p>
             </CardContent>
           </Card>
         ) : (
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {challenges.map((challenge) => (
+            {filteredChallenges.map((challenge) => (
               <Card 
                 key={challenge.id} 
                 className={`

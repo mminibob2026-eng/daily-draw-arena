@@ -63,3 +63,38 @@ CREATE POLICY "Dev accounts can delete custom challenges" ON public.challenge_ba
   FOR DELETE USING (
     source = 'custom' AND created_by = auth.uid()
   );
+
+-- Service role can do anything (for seeding/reads)
+CREATE POLICY "Service role can manage challenge bank" ON public.challenge_bank 
+  FOR ALL USING (true);
+
+-- ============================================
+-- STORAGE POLICIES (Additional)
+-- ============================================
+
+-- Allow authenticated users to upload to submissions
+DROP POLICY IF EXISTS "Anyone can upload to submissions" ON storage.objects;
+CREATE POLICY "submissions_upload_authenticated" ON storage.objects
+  FOR INSERT TO authenticated
+  WITH CHECK (bucket_id = 'submissions');
+
+-- Allow anyone to read submissions
+DROP POLICY IF EXISTS "Anyone can read submissions" ON storage.objects;
+CREATE POLICY "submissions_read_all" ON storage.objects
+  FOR SELECT USING (bucket_id = 'submissions');
+
+-- Allow users to delete their own submissions
+DROP POLICY IF EXISTS "Users can delete own submissions" ON storage.objects;
+CREATE POLICY "submissions_delete_own" ON storage.objects
+  FOR DELETE USING (bucket_id = 'submissions' AND auth.uid()::text = (storage.foldername(name))[1]);
+
+-- Allow anyone to upload to ai-generated
+DROP POLICY IF EXISTS "Anyone can upload to ai-generated" ON storage.objects;
+CREATE POLICY "ai_generated_upload_all" ON storage.objects
+  FOR INSERT TO authenticated
+  WITH CHECK (bucket_id = 'ai-generated');
+
+-- Allow anyone to read ai-generated
+DROP POLICY IF EXISTS "Anyone can read ai-generated" ON storage.objects;
+CREATE POLICY "ai_generated_read_all" ON storage.objects
+  FOR SELECT USING (bucket_id = 'ai-generated');
