@@ -1,0 +1,16 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/generate-challenges",
+      "schedule": "0 16 * * *"
+    },
+    {
+      "path": "/api/cron/process-evaluations",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/close-battles",
+      "schedule": "*/5 * * * *"
+    }
+  ]
+}

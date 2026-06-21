@@ -1,11 +1,13 @@
 import Link from 'next/link'
+import { createClient } from '@/lib/supabase/server'
+import { getChallengeDate } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 
-const challenges = [
-  { title: 'The Last Cat King', description: 'Draw the final ruler of a feline empire defending their kingdom.' },
-  { title: 'Machine Dream', description: 'Visualize what artificial consciousness dreams about.' },
-  { title: 'Lost Civilization', description: 'Reimagine an ancient society that never existed.' },
+const fallbackChallenges = [
+  { title: 'Coming Soon', description: 'Today\'s challenges are being generated. Check back shortly!' },
+  { title: 'Coming Soon', description: 'Today\'s challenges are being generated. Check back shortly!' },
+  { title: 'Coming Soon', description: 'Today\'s challenges are being generated. Check back shortly!' },
 ]
 
 const features = [
@@ -27,7 +29,21 @@ const features = [
   },
 ]
 
-export default function Home() {
+export default async function Home() {
+  const supabase = await createClient()
+  const today = getChallengeDate()
+
+  // Fetch live challenges for today
+  const { data: liveChallenges } = await supabase
+    .from('daily_challenges')
+    .select('title, description, slot')
+    .eq('challenge_date', today)
+    .order('slot')
+
+  const challenges = liveChallenges && liveChallenges.length > 0
+    ? liveChallenges
+    : fallbackChallenges
+
   return (
     <div className="flex flex-col">
       <section className="relative py-20 lg:py-32 overflow-hidden">

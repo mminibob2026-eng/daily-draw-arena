@@ -50,11 +50,25 @@ export async function POST(request: NextRequest) {
 
     const challenge = submission.daily_challenges
 
-    const aiImageUrl = await generateBattleImage(
-      challenge.title,
-      challenge.description || ''
-    )
+    // Mark the human submission as is_ai_battle = true
+    await supabase
+      .from('submissions')
+      .update({ is_ai_battle: true })
+      .eq('id', submissionId)
 
+    // Generate AI image FIRST, then insert both records with proper error handling
+    let aiImageUrl: string
+    try {
+      aiImageUrl = await generateBattleImage(
+        challenge.title,
+        challenge.description || ''
+      )
+    } catch (genError) {
+      console.error('AI image generation error:', genError)
+      return NextResponse.json({ error: 'Failed to generate AI image' }, { status: 500 })
+    }
+
+    // Insert AI image record
     const { data: aiImage, error: aiImageError } = await supabase
       .from('ai_generated_images')
       .insert({
@@ -67,14 +81,16 @@ export async function POST(request: NextRequest) {
 
     if (aiImageError) {
       console.error('AI image insert error:', aiImageError)
+      return NextResponse.json({ error: 'Failed to save AI image' }, { status: 500 })
     }
 
+    // Now insert battle with the AI image ID
     const { data: battle, error: battleError } = await supabase
       .from('ai_battles')
       .insert({
         challenge_id: submission.challenge_id,
         human_submission_id: submissionId,
-        ai_image_id: aiImage?.id,
+        ai_image_id: aiImage.id,
         status: 'voting',
         ends_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
       })
@@ -83,13 +99,18 @@ export async function POST(request: NextRequest) {
 
     if (battleError) {
       console.error('Battle insert error:', battleError)
+      // Clean up the dangling AI image
+      await supabase
+        .from('ai_generated_images')
+        .delete()
+        .eq('id', aiImage.id)
       return NextResponse.json({ error: 'Failed to create battle' }, { status: 500 })
     }
 
     return NextResponse.json({ success: true, battle })
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Battle creation error:', error)
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    return NextResponse.json({ error: error instanceof Error ? error.message : 'Unknown error' }, { status: 500 })
   }
 }
 

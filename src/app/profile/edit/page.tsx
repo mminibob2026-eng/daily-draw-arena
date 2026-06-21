@@ -1,29 +1,26 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { createClient } from '@/lib/supabase/client'
+import Image from 'next/image'
 import { useAuth } from '@/contexts/auth-context'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Badge } from '@/components/ui/badge'
+import { useToast } from '@/hooks/use-toast'
 
 export default function EditProfilePage() {
   const { user, profile, refreshProfile } = useAuth()
   const router = useRouter()
-  const supabase = createClient()
-  const [username, setUsername] = useState('')
+  const { toast } = useToast()
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [username, setUsername] = useState(profile?.username || '')
+  const [avatarUrl, setAvatarUrl] = useState(profile?.avatar_url || null)
   const [loading, setLoading] = useState(false)
+  const [uploadingAvatar, setUploadingAvatar] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState(false)
-
-  useEffect(() => {
-    if (profile?.username) {
-      setUsername(profile.username)
-    }
-  }, [profile])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -33,23 +30,79 @@ export default function EditProfilePage() {
     setSuccess(false)
     setLoading(true)
 
-    const { error: updateError } = await supabase
-      .from('profiles')
-      .update({ username: username.trim() })
-      .eq('id', user.id)
+    try {
+      const res = await fetch('/api/profile/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: username.trim() }),
+      })
 
-    if (updateError) {
-      if (updateError.code === '23505') {
-        setError('This username is already taken.')
+      const data = await res.json()
+
+      if (res.ok) {
+        await refreshProfile()
+        setSuccess(true)
+        toast({ title: 'Profile updated!' })
+        setTimeout(() => router.push('/profile'), 1000)
       } else {
-        setError(updateError.message)
+        if (data.code === 'USERNAME_TAKEN' || res.status === 409) {
+          setError('This username is already taken. Please choose a different one.')
+        } else if (data.code === 'INVALID_USERNAME') {
+          setError('Username must be 3-20 characters, alphanumeric and underscores only.')
+        } else {
+          setError(data.error || 'Failed to update profile')
+        }
       }
+    } catch (err) {
+      setError('Failed to update profile. Please try again.')
+    } finally {
       setLoading(false)
-    } else {
+    }
+  }
+
+  const handleAvatarChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    setUploadingAvatar(true)
+    setError('')
+
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+
+      const res = await fetch('/api/profile/avatar', {
+        method: 'POST',
+        body: formData,
+      })
+
+      const data = await res.json()
+
+      if (res.ok) {
+        setAvatarUrl(data.avatarUrl)
+        await refreshProfile()
+        toast({ title: 'Avatar updated!' })
+      } else {
+        setError(data.error || 'Failed to upload avatar')
+      }
+    } catch (err) {
+      setError('Failed to upload avatar')
+    } finally {
+      setUploadingAvatar(false)
+    }
+  }
+
+  const handleRemoveAvatar = async () => {
+    setUploadingAvatar(true)
+    try {
+      await fetch('/api/profile/avatar', { method: 'DELETE' })
+      setAvatarUrl(null)
       await refreshProfile()
-      setSuccess(true)
-      setLoading(false)
-      router.push('/profile')
+      toast({ title: 'Avatar removed' })
+    } catch (err) {
+      setError('Failed to remove avatar')
+    } finally {
+      setUploadingAvatar(false)
     }
   }
 
@@ -97,14 +150,53 @@ export default function EditProfilePage() {
                 </div>
               )}
 
-              <div className="flex items-center gap-4 p-4 bg-muted rounded-lg">
-                <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center text-2xl font-bold">
-                  {username[0]?.toUpperCase() || '?'}
+              {/* Avatar upload */}
+              <div className="flex flex-col items-center gap-3">
+                <div className="w-20 h-20 rounded-full bg-primary/10 flex items-center justify-center overflow-hidden">
+                  {avatarUrl ? (
+                    <Image
+                      src={avatarUrl}
+                      alt="Avatar"
+                      width={80}
+                      height={80}
+                      className="object-cover w-full h-full"
+                    />
+                  ) : (
+                    <span className="text-2xl font-bold">
+                      {username[0]?.toUpperCase() || '?'}
+                    </span>
+                  )}
                 </div>
-                <div>
-                  <p className="font-medium">{username || 'user_xxx'}</p>
-                  <p className="text-sm text-muted-foreground">{user.email}</p>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleAvatarChange}
+                  className="hidden"
+                />
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={uploadingAvatar}
+                  >
+                    {uploadingAvatar ? 'Uploading...' : 'Change Avatar'}
+                  </Button>
+                  {avatarUrl && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleRemoveAvatar}
+                      disabled={uploadingAvatar}
+                    >
+                      Remove
+                    </Button>
+                  )}
                 </div>
+                <p className="text-xs text-muted-foreground">Max 2MB. JPG, PNG, WebP.</p>
               </div>
 
               <div className="space-y-2">
@@ -120,7 +212,7 @@ export default function EditProfilePage() {
                   maxLength={20}
                 />
                 <p className="text-xs text-muted-foreground">
-                  3-20 characters. This is how other users see you.
+                  3-20 characters, alphanumeric and underscores only.
                 </p>
               </div>
 

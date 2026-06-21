@@ -22,6 +22,93 @@ CREATE POLICY "Users can insert own challenge history" ON public.user_challenge_
 CREATE POLICY "Service can manage challenge history" ON public.user_challenge_history 
   FOR ALL USING (true);
 
+-- Add last_submission_date column to profiles
+ALTER TABLE public.profiles
+  ADD COLUMN IF NOT EXISTS last_submission_date DATE;
+
+-- Atomic vote counter function to prevent race conditions
+CREATE OR REPLACE FUNCTION public.atomic_vote(
+  p_battle_id UUID,
+  p_old_vote TEXT,
+  p_new_vote TEXT
+)
+RETURNS void
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  -- Lock the battle row to prevent concurrent updates
+  PERFORM 1 FROM public.ai_battles WHERE id = p_battle_id FOR UPDATE;
+
+  IF p_old_vote IS NOT NULL THEN
+    -- User is changing their vote
+    IF p_old_vote = 'human' THEN
+      UPDATE public.ai_battles
+      SET human_votes = GREATEST(0, human_votes - 1)
+      WHERE id = p_battle_id;
+    ELSE
+      UPDATE public.ai_battles
+      SET ai_votes = GREATEST(0, ai_votes - 1)
+      WHERE id = p_battle_id;
+    END IF;
+  END IF;
+
+  IF p_new_vote IS NOT NULL THEN
+    IF p_new_vote = 'human' THEN
+      UPDATE public.ai_battles
+      SET human_votes = human_votes + 1
+      WHERE id = p_battle_id;
+    ELSE
+      UPDATE public.ai_battles
+      SET ai_votes = ai_votes + 1
+      WHERE id = p_battle_id;
+    END IF;
+  END IF;
+END;
+$$;
+
+-- Add async evaluation status tracking
+ALTER TABLE public.evaluations
+  ADD COLUMN IF NOT EXISTS evaluation_status TEXT DEFAULT 'completed' CHECK (evaluation_status IN ('pending', 'processing', 'completed', 'failed'));
+
+ALTER TABLE public.evaluations
+  ADD COLUMN IF NOT EXISTS retry_count INTEGER DEFAULT 0;
+
+ALTER TABLE public.evaluations
+  ADD COLUMN IF NOT EXISTS last_error TEXT;
+
+-- ============================================
+-- COMMENT LIKES
+-- ============================================
+CREATE TABLE IF NOT EXISTS public.comment_likes (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  comment_id UUID REFERENCES public.comments(id) ON DELETE CASCADE,
+  user_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(comment_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_comment_likes_comment ON public.comment_likes(comment_id);
+CREATE INDEX IF NOT EXISTS idx_comment_likes_user ON public.comment_likes(user_id);
+
+ALTER TABLE public.comment_likes ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Comment likes are publicly readable" ON public.comment_likes
+  FOR SELECT USING (true);
+
+CREATE POLICY "Authenticated users can like comments" ON public.comment_likes
+  FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can unlike comments" ON public.comment_likes
+  FOR DELETE USING (auth.uid() = user_id);
+
+-- ============================================
+-- COMMENT REPLIES (parent_comment_id)
+-- ============================================
+ALTER TABLE public.comments
+  ADD COLUMN IF NOT EXISTS parent_comment_id UUID REFERENCES public.comments(id) ON DELETE CASCADE;
+
+CREATE INDEX IF NOT EXISTS idx_comments_parent ON public.comments(parent_comment_id);
+
 -- ============================================
 -- CHALLENGE BANK
 -- ============================================

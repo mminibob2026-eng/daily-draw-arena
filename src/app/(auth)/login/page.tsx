@@ -1,21 +1,37 @@
 'use client'
 
-import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { Suspense, useState, useEffect } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 
-export default function LoginPage() {
+function LoginForm() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [googleLoading, setGoogleLoading] = useState(false)
   const router = useRouter()
+  const searchParams = useSearchParams()
   const supabase = createClient()
+
+  // Handle OAuth errors from callback redirect
+  useEffect(() => {
+    const errorParam = searchParams.get('error')
+    const errorDescription = searchParams.get('error_description')
+    if (errorParam) {
+      const messages: Record<string, string> = {
+        'auth_failed': 'Authentication failed. Please try again.',
+        'access_denied': 'Access denied. You cancelled the sign-in.',
+        'server_error': 'Server error during authentication. Please try again.',
+        'temporarily_unavailable': 'Authentication service is temporarily unavailable.',
+      }
+      setError(messages[errorParam] || errorDescription || 'Authentication failed.')
+    }
+  }, [searchParams])
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -145,5 +161,14 @@ export default function LoginPage() {
         </CardContent>
       </Card>
     </div>
+  )
+}
+
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<div>Loading...</div>}>
+      <LoginForm />
+    </Suspense>
   )
 }

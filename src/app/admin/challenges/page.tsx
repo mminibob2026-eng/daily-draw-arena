@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import Link from 'next/link'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -80,9 +80,16 @@ export default function AdminChallengesPage() {
     fetchChallenges(1)
   }, [fetchChallenges])
 
+  const searchDebounceRef = useRef<NodeJS.Timeout | null>(null)
+
   const handleSearch = (value: string) => {
     setSearchQuery(value)
-    fetchChallenges(1)
+    if (searchDebounceRef.current) {
+      clearTimeout(searchDebounceRef.current)
+    }
+    searchDebounceRef.current = setTimeout(() => {
+      fetchChallenges(1)
+    }, 300)
   }
 
   const handleFilterChange = (value: 'all' | 'enabled' | 'disabled' | 'used') => {

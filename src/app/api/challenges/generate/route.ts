@@ -52,13 +52,16 @@ async function generateChallengesForDate(supabase: any, targetDate: string, user
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
   const thirtyDaysAgoStr = thirtyDaysAgo.toISOString().split('T')[0]
 
-  const { data: recentHistory } = await supabase
-    .from('user_challenge_history')
-    .select('challenge_title')
-    .gte('shown_at', thirtyDaysAgoStr)
+  // Use daily_challenges (global) as the source of truth for 30-day history
+  // This ensures 30-day rule is enforced across ALL users, not just per-user
+  const { data: recentChallenges } = await supabase
+    .from('daily_challenges')
+    .select('title')
+    .gte('challenge_date', thirtyDaysAgoStr)
 
-  const recentTitles = recentHistory?.map((h: { challenge_title: string }) => h.challenge_title) || []
-  const usedTitles: Set<string> = new Set(recentTitles)
+  const usedTitles: Set<string> = new Set(
+    (recentChallenges || []).map((c: { title: string }) => c.title)
+  )
 
   // Use challenge_bank database table as source of truth
   const allEnabledChallenges = await getEnabledChallenges(supabase)
@@ -90,6 +93,7 @@ async function generateChallengesForDate(supabase: any, targetDate: string, user
 
     insertedChallenges.push(data)
 
+    // Also write to user_challenge_history for per-user tracking if userId provided
     if (userId) {
       await supabase
         .from('user_challenge_history')
@@ -189,12 +193,15 @@ export async function GET(request: NextRequest) {
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
     const thirtyDaysAgoStr = thirtyDaysAgo.toISOString().split('T')[0]
 
-    const { data: recentHistory } = await supabase
-      .from('user_challenge_history')
-      .select('challenge_title')
-      .gte('shown_at', thirtyDaysAgoStr)
+    // Use daily_challenges (global) for 30-day history
+    const { data: recentChallenges } = await supabase
+      .from('daily_challenges')
+      .select('title')
+      .gte('challenge_date', thirtyDaysAgoStr)
 
-    const usedTitles = new Set(recentHistory?.map((h: { challenge_title: string }) => h.challenge_title) || [])
+    const usedTitles = new Set(
+      (recentChallenges || []).map((c: { title: string }) => c.title)
+    )
 
     // Count from database, not static array
     const { count: totalEnabled } = await supabase

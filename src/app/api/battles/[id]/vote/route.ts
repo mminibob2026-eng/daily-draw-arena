@@ -33,26 +33,17 @@ export async function POST(
       }
 
       const oldVote = existingVote.vote_for
-      const oldColumn = oldVote === 'human' ? 'human_votes' : 'ai_votes'
-      const newColumn = voteFor === 'human' ? 'human_votes' : 'ai_votes'
 
-      const { data: currentBattle } = await supabase
-        .from('ai_battles')
-        .select('human_votes, ai_votes')
-        .eq('id', battleId)
-        .single()
+      // Use atomic RPC function to prevent race conditions
+      const { error: rpcError } = await supabase.rpc('atomic_vote', {
+        p_battle_id: battleId,
+        p_old_vote: oldVote,
+        p_new_vote: voteFor,
+      })
 
-      if (currentBattle) {
-        const oldCount = currentBattle[oldColumn] || 0
-        const newCount = currentBattle[newColumn] || 0
-
-        await supabase
-          .from('ai_battles')
-          .update({
-            [oldColumn]: Math.max(0, oldCount - 1),
-            [newColumn]: newCount + 1,
-          })
-          .eq('id', battleId)
+      if (rpcError) {
+        console.error('Atomic vote error:', rpcError)
+        return NextResponse.json({ error: 'Failed to record vote' }, { status: 500 })
       }
 
       await supabase
@@ -60,13 +51,19 @@ export async function POST(
         .update({ vote_for: voteFor })
         .eq('id', existingVote.id)
     } else {
-      const { data: currentBattle } = await supabase
-        .from('ai_battles')
-        .select('human_votes, ai_votes')
-        .eq('id', battleId)
-        .single()
+      // Use atomic RPC function for new vote
+      const { error: rpcError } = await supabase.rpc('atomic_vote', {
+        p_battle_id: battleId,
+        p_old_vote: null,
+        p_new_vote: voteFor,
+      })
 
-      await supabase
+      if (rpcError) {
+        console.error('Atomic vote error:', rpcError)
+        return NextResponse.json({ error: 'Failed to record vote' }, { status: 500 })
+      }
+
+      const { error: voteInsertError } = await supabase
         .from('votes')
         .insert({
           battle_id: battleId,
@@ -74,14 +71,14 @@ export async function POST(
           vote_for: voteFor,
         })
 
-      if (currentBattle) {
-        const column = voteFor === 'human' ? 'human_votes' : 'ai_votes'
-        const currentCount = currentBattle[column] || 0
-
-        await supabase
-          .from('ai_battles')
-          .update({ [column]: currentCount + 1 })
-          .eq('id', battleId)
+      if (voteInsertError) {
+        // Rollback the count if vote insert failed
+        await supabase.rpc('atomic_vote', {
+          p_battle_id: battleId,
+          p_old_vote: voteFor,
+          p_new_vote: null,
+        })
+        return NextResponse.json({ error: 'Failed to record vote' }, { status: 500 })
       }
     }
 

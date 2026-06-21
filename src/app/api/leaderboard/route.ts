@@ -7,9 +7,35 @@ export async function GET(request: NextRequest) {
     const supabase = await createClient()
     const searchParams = request.nextUrl.searchParams
     const challengeId = searchParams.get('challengeId')
-    const date = searchParams.get('date') || getChallengeDate()
+    const dateParam = searchParams.get('date')
+    const date = dateParam || getChallengeDate()
 
-    let query = supabase
+    let challengeIds: string[] = []
+
+    if (challengeId) {
+      challengeIds = [challengeId]
+    } else {
+      // Get ALL challenges for the date (all 3 slots)
+      const { data: challenges } = await supabase
+        .from('daily_challenges')
+        .select('id, slot, title, description')
+        .eq('challenge_date', date)
+        .order('slot')
+
+      if (!challenges || challenges.length === 0) {
+        return NextResponse.json({
+          leaderboard: [],
+          date,
+          challenges: [],
+          message: 'No challenges for this date',
+        })
+      }
+
+      challengeIds = challenges.map(c => c.id)
+    }
+
+    // Fetch leaderboard entries for all challenges
+    const { data: leaderboard, error } = await supabase
       .from('leaderboard')
       .select(`
         *,
@@ -21,34 +47,49 @@ export async function GET(request: NextRequest) {
         ),
         challenges:challenge_id (
           id,
-          title
+          title,
+          slot
         )
       `)
+      .in('challenge_id', challengeIds)
       .order('rank')
-
-    if (challengeId) {
-      query = query.eq('challenge_id', challengeId)
-    } else {
-      const { data: challenges } = await supabase
-        .from('daily_challenges')
-        .select('id')
-        .eq('challenge_date', date)
-
-      if (challenges?.length) {
-        query = query.eq('challenge_id', challenges[0].id)
-      }
-    }
-
-    const { data: leaderboard, error } = await query.limit(50)
+      .limit(150)
 
     if (error) {
       console.error('Leaderboard fetch error:', error)
       return NextResponse.json({ error: 'Failed to fetch leaderboard' }, { status: 500 })
     }
 
-    return NextResponse.json({ leaderboard: leaderboard || [] })
-  } catch (error: any) {
+    // Group by challenge slot for per-slot view
+    const bySlot: Record<number, any[]> = {}
+    leaderboard?.forEach(entry => {
+      const slot = entry.challenges?.slot || 1
+      if (!bySlot[slot]) bySlot[slot] = []
+      bySlot[slot].push(entry)
+    })
+
+    // Also compute overall combined ranking (per user, best score across all slots)
+    const userBestMap: Record<string, any> = {}
+    leaderboard?.forEach(entry => {
+      const userId = entry.user_id
+      if (!userBestMap[userId] || entry.final_score > userBestMap[userId].final_score) {
+        userBestMap[userId] = entry
+      }
+    })
+
+    const overall = Object.values(userBestMap)
+      .sort((a, b) => b.final_score - a.final_score)
+      .slice(0, 50)
+
+    return NextResponse.json({
+      leaderboard: leaderboard || [],
+      bySlot,
+      overall,
+      date,
+      challengeCount: challengeIds.length,
+    })
+  } catch (error: unknown) {
     console.error('Leaderboard error:', error)
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    return NextResponse.json({ error: error instanceof Error ? error.message : 'Unknown error' }, { status: 500 })
   }
 }

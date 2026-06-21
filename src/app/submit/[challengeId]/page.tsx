@@ -51,8 +51,8 @@ export default function SubmitPage({
         .select('id')
         .eq('user_id', user.id)
         .eq('challenge_id', challengeId)
-        .single()
-      
+        .maybeSingle()
+
       if (data) {
         toast({
           title: 'Already submitted',
@@ -94,29 +94,60 @@ export default function SubmitPage({
     setPreview(URL.createObjectURL(selected))
   }
 
-  const triggerEvaluation = async (submissionId: string) => {
-    try {
-      const response = await fetch('/api/evaluations', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ submissionId }),
-      })
+  const pollEvaluation = async (submissionId: string) => {
+    const maxAttempts = 60 // Poll for up to 5 minutes
+    let attempts = 0
 
-      if (!response.ok) {
-        throw new Error('Evaluation failed')
+    const poll = async (): Promise<boolean> => {
+      try {
+        const res = await fetch(`/api/evaluations/status?submissionId=${submissionId}`)
+        if (!res.ok) return false
+
+        const data = await res.json()
+
+        if (data.status === 'completed') {
+          toast({
+            title: 'Evaluation complete!',
+            description: `Final score: ${data.evaluation.finalScore.toFixed(1)}/100`,
+          })
+          return true
+        }
+
+        if (data.status === 'failed') {
+          toast({
+            title: 'Evaluation failed',
+            description: data.lastError || 'AI evaluation could not be completed. Please try again later.',
+            variant: 'destructive',
+          })
+          return true
+        }
+
+        return false
+      } catch {
+        return false
+      }
+    }
+
+    while (attempts < maxAttempts) {
+      const done = await poll()
+      if (done) break
+
+      // Show "still processing" toast after 30 seconds
+      if (attempts === 6) {
+        toast({
+          title: 'Still evaluating...',
+          description: 'Your drawing is being analyzed. This usually takes 15-30 seconds.',
+        })
       }
 
-      const { evaluation } = await response.json()
-      
+      await new Promise(resolve => setTimeout(resolve, 5000)) // Poll every 5s
+      attempts++
+    }
+
+    if (attempts >= maxAttempts) {
       toast({
-        title: 'Evaluation complete!',
-        description: `Final score: ${evaluation.finalScore.toFixed(1)}/100`,
-      })
-    } catch (error) {
-      console.error('Evaluation error:', error)
-      toast({
-        title: 'Evaluation pending',
-        description: 'Your drawing has been submitted. AI evaluation will complete shortly.',
+        title: 'Evaluation taking longer than expected',
+        description: 'We\'ll notify you when it\'s ready. You can check your profile later.',
       })
     }
   }
@@ -161,13 +192,14 @@ export default function SubmitPage({
       setEvaluating(true)
       toast({
         title: 'Submission received!',
-        description: 'Your drawing is being evaluated by AI...',
+        description: 'Your drawing is being evaluated by AI. This may take 15-30 seconds...',
       })
 
-      await triggerEvaluation(submission.id)
-
-      router.push(`/challenges/${challengeId}`)
-      router.refresh()
+      // Start polling in background - don't await, let user navigate
+      pollEvaluation(submission.id).then(() => {
+        router.push(`/challenges/${challengeId}`)
+        router.refresh()
+      })
     } catch (error) {
       evaluationDoneRef.current = false
       const err = error as Error
