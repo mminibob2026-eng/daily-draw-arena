@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { GenerateButton } from '@/components/generate-button'
+import { AutoGenerateButton } from '@/components/auto-generate-button'
 
 export default async function ChallengesPage() {
   const supabase = await createClient()
@@ -20,9 +20,9 @@ export default async function ChallengesPage() {
         .single()
     : { data: null }
 
-  const { data: challenges } = await supabase
+  const { data: challenges, count } = await supabase
     .from('daily_challenges')
-    .select('*')
+    .select('*', { count: 'exact' })
     .eq('challenge_date', today)
     .order('slot')
 
@@ -45,8 +45,8 @@ export default async function ChallengesPage() {
           </p>
         </div>
         <div className="flex items-center gap-4">
-          {profile?.is_dev_account && !challenges?.length && (
-            <GenerateButton date={today} />
+          {!challenges?.length && (
+            <AutoGenerateButton date={today} />
           )}
           <Badge variant="outline" className="text-sm">
             Resets at midnight MYT
