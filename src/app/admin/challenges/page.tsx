@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -23,11 +23,20 @@ interface Challenge {
   usageCount: number
 }
 
+interface Pagination {
+  page: number
+  limit: number
+  total: number
+  totalPages: number
+  hasMore: boolean
+}
+
 export default function AdminChallengesPage() {
   const { user, profile } = useAuth()
   const [challenges, setChallenges] = useState<Challenge[]>([])
   const [loading, setLoading] = useState(true)
   const [stats, setStats] = useState({ total: 0, used: 0, available: 0, disabled: 0 })
+  const [pagination, setPagination] = useState<Pagination>({ page: 1, limit: 20, total: 0, totalPages: 0, hasMore: false })
   const [showAddForm, setShowAddForm] = useState(false)
   const [newChallenge, setNewChallenge] = useState({ title: '', description: '' })
   const [addingChallenge, setAddingChallenge] = useState(false)
@@ -37,54 +46,53 @@ export default function AdminChallengesPage() {
   const [searchQuery, setSearchQuery] = useState('')
   const [filter, setFilter] = useState<'all' | 'enabled' | 'disabled' | 'used'>('all')
 
-  useEffect(() => {
-    async function load() {
-      try {
-        const res = await fetch('/api/admin/challenges')
-        const data = await res.json()
-        
-        if (res.ok) {
-          setChallenges(data.challenges || [])
-          setStats({
-            total: data.total || 0,
-            used: data.used || 0,
-            available: data.available || 0,
-            disabled: data.disabled || 0,
-          })
-          
-          if (data.total === 0) {
-            setSeedingMsg('Challenge bank is empty. Click "Seed Bank" to populate it.')
-          }
-        } else {
-          setError(data.error || 'Failed to fetch challenges')
-        }
-      } catch (err: unknown) {
-        setError(err instanceof Error ? err.message : 'Unknown error')
-      } finally {
-        setLoading(false)
-      }
-    }
-    load()
-  }, [])
-
-  const filteredChallenges = useMemo(() => {
-    return challenges.filter(c => {
-      const matchesSearch = searchQuery === '' || 
-        c.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        c.description.toLowerCase().includes(searchQuery.toLowerCase())
+  const fetchChallenges = useCallback(async (page: number = 1) => {
+    setLoading(true)
+    try {
+      const params = new URLSearchParams({
+        page: page.toString(),
+        limit: '20',
+        search: searchQuery,
+        filter,
+      })
+      const res = await fetch(`/api/admin/challenges?${params}`)
+      const data = await res.json()
       
-      switch (filter) {
-        case 'enabled':
-          return matchesSearch && c.is_enabled && !c.used
-        case 'disabled':
-          return matchesSearch && !c.is_enabled
-        case 'used':
-          return matchesSearch && c.used
-        default:
-          return matchesSearch
+      if (res.ok) {
+        setChallenges(data.challenges || [])
+        setPagination(data.pagination)
+        setStats(data.stats)
+        
+        if (data.stats.total === 0) {
+          setSeedingMsg('Challenge bank is empty. Click "Seed Bank" to populate it.')
+        }
+      } else {
+        setError(data.error || 'Failed to fetch challenges')
       }
-    })
-  }, [challenges, searchQuery, filter])
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setLoading(false)
+    }
+  }, [searchQuery, filter])
+
+  useEffect(() => {
+    fetchChallenges(1)
+  }, [fetchChallenges])
+
+  const handleSearch = (value: string) => {
+    setSearchQuery(value)
+    fetchChallenges(1)
+  }
+
+  const handleFilterChange = (value: 'all' | 'enabled' | 'disabled' | 'used') => {
+    setFilter(value)
+    fetchChallenges(1)
+  }
+
+  const handlePageChange = (newPage: number) => {
+    fetchChallenges(newPage)
+  }
 
   async function handleSeed() {
     setSeeding(true)
@@ -101,23 +109,9 @@ export default function AdminChallengesPage() {
       
       if (res.ok) {
         setSeedingMsg(data.message)
-        setTimeout(async () => {
+        setTimeout(() => {
           setSeedingMsg('')
-          try {
-            const refreshRes = await fetch('/api/admin/challenges')
-            const refreshData = await refreshRes.json()
-            if (refreshRes.ok) {
-              setChallenges(refreshData.challenges || [])
-              setStats({
-                total: refreshData.total || 0,
-                used: refreshData.used || 0,
-                available: refreshData.available || 0,
-                disabled: refreshData.disabled || 0,
-              })
-            }
-          } catch {
-            // silently fail
-          }
+          fetchChallenges(1)
         }, 1500)
       } else {
         setError(data.error || 'Failed to seed')
@@ -325,41 +319,41 @@ export default function AdminChallengesPage() {
             <Input
               placeholder="Search challenges..."
               value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
+              onChange={e => handleSearch(e.target.value)}
               className="max-w-xs"
             />
             <div className="flex gap-2">
               <Button
                 variant={filter === 'all' ? 'primary' : 'outline'}
                 size="sm"
-                onClick={() => setFilter('all')}
+                onClick={() => handleFilterChange('all')}
               >
                 All
               </Button>
               <Button
                 variant={filter === 'enabled' ? 'primary' : 'outline'}
                 size="sm"
-                onClick={() => setFilter('enabled')}
+                onClick={() => handleFilterChange('enabled')}
               >
                 Enabled
               </Button>
               <Button
                 variant={filter === 'disabled' ? 'primary' : 'outline'}
                 size="sm"
-                onClick={() => setFilter('disabled')}
+                onClick={() => handleFilterChange('disabled')}
               >
                 Disabled
               </Button>
               <Button
                 variant={filter === 'used' ? 'primary' : 'outline'}
                 size="sm"
-                onClick={() => setFilter('used')}
+                onClick={() => handleFilterChange('used')}
               >
                 Used
               </Button>
             </div>
             <p className="text-sm text-muted-foreground self-center ml-auto">
-              Showing {filteredChallenges.length} of {stats.total}
+              Showing {challenges.length} of {stats.total}
             </p>
           </div>
         )}
@@ -405,79 +399,105 @@ export default function AdminChallengesPage() {
               <p className="text-muted-foreground">Loading...</p>
             </CardContent>
           </Card>
-        ) : filteredChallenges.length === 0 ? (
+        ) : challenges.length === 0 ? (
           <Card>
             <CardContent className="py-12 text-center">
               <p className="text-muted-foreground">
-                {searchQuery || filter !== 'all' 
-                  ? 'No challenges match your filter.' 
+                {searchQuery || filter !== 'all'
+                  ? 'No challenges match your filter.'
                   : 'No challenges in the bank.'}
               </p>
             </CardContent>
           </Card>
         ) : (
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredChallenges.map((challenge) => (
-              <Card 
-                key={challenge.id} 
-                className={`
-                  ${!challenge.is_enabled ? 'opacity-60' : ''}
-                  ${challenge.used ? 'border-muted-foreground/20' : 'border-success/30'}
-                `}
-              >
-                <CardHeader className="pb-2">
-                  <div className="flex items-start justify-between gap-2">
-                    <CardTitle className="text-base leading-tight">{challenge.title}</CardTitle>
-                    <div className="flex items-center gap-2">
+          <>
+            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {challenges.map((challenge) => (
+                <Card
+                  key={challenge.id}
+                  className={`
+                    ${!challenge.is_enabled ? 'opacity-60' : ''}
+                    ${challenge.used ? 'border-muted-foreground/20' : 'border-success/30'}
+                  `}
+                >
+                  <CardHeader className="pb-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <CardTitle className="text-base leading-tight">{challenge.title}</CardTitle>
+                      <div className="flex items-center gap-2">
+                        {challenge.source === 'custom' && (
+                          <Badge variant="outline" className="text-xs">Custom</Badge>
+                        )}
+                        {challenge.used ? (
+                          <Badge variant="secondary" className="text-xs">Used</Badge>
+                        ) : (
+                          <Badge variant="success" className="text-xs">New</Badge>
+                        )}
+                      </div>
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-sm text-muted-foreground mb-3">
+                      {challenge.description}
+                    </p>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Switch
+                          checked={challenge.is_enabled}
+                          onCheckedChange={() => handleToggle(challenge)}
+                          id={`toggle-${challenge.id}`}
+                        />
+                        <Label htmlFor={`toggle-${challenge.id}`} className="text-xs cursor-pointer">
+                          {challenge.is_enabled ? 'Enabled' : 'Disabled'}
+                        </Label>
+                      </div>
                       {challenge.source === 'custom' && (
-                        <Badge variant="outline" className="text-xs">Custom</Badge>
-                      )}
-                      {challenge.used ? (
-                        <Badge variant="secondary" className="text-xs">Used</Badge>
-                      ) : (
-                        <Badge variant="success" className="text-xs">New</Badge>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-destructive hover:text-destructive"
+                          onClick={() => handleDelete(challenge.id)}
+                        >
+                          Delete
+                        </Button>
                       )}
                     </div>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-sm text-muted-foreground mb-3">
-                    {challenge.description}
-                  </p>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Switch
-                        checked={challenge.is_enabled}
-                        onCheckedChange={() => handleToggle(challenge)}
-                        id={`toggle-${challenge.id}`}
-                      />
-                      <Label htmlFor={`toggle-${challenge.id}`} className="text-xs cursor-pointer">
-                        {challenge.is_enabled ? 'Enabled' : 'Disabled'}
-                      </Label>
-                    </div>
-                    {challenge.source === 'custom' && (
-                      <Button 
-                        variant="ghost" 
-                        size="sm" 
-                        className="text-destructive hover:text-destructive"
-                        onClick={() => handleDelete(challenge.id)}
-                      >
-                        Delete
-                      </Button>
+                    {challenge.used && (
+                      <div className="text-xs text-muted-foreground mt-2">
+                        <span>Used {challenge.usageCount}x</span>
+                        {challenge.lastUsed && (
+                          <span> · Last: {challenge.lastUsed}</span>
+                        )}
+                      </div>
                     )}
-                  </div>
-                  {challenge.used && (
-                    <div className="text-xs text-muted-foreground mt-2">
-                      <span>Used {challenge.usageCount}x</span>
-                      {challenge.lastUsed && (
-                        <span> · Last: {challenge.lastUsed}</span>
-                      )}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            ))}
-          </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+
+            {pagination.totalPages > 1 && (
+              <div className="flex items-center justify-center gap-2 mt-6">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={pagination.page <= 1}
+                  onClick={() => handlePageChange(pagination.page - 1)}
+                >
+                  Previous
+                </Button>
+                <span className="text-sm text-muted-foreground">
+                  Page {pagination.page} of {pagination.totalPages}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={!pagination.hasMore}
+                  onClick={() => handlePageChange(pagination.page + 1)}
+                >
+                  Next
+                </Button>
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>

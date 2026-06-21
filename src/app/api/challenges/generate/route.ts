@@ -2,12 +2,25 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { CHALLENGE_BANK } from '@/lib/challenges'
 
+async function isDevAccount(supabase: any, userId: string): Promise<boolean> {
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('is_dev_account')
+    .eq('id', userId)
+    .single()
+  return profile?.is_dev_account === true
+}
+
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient()
+    const { data: { user } } = await supabase.auth.getUser()
     const authHeader = request.headers.get('authorization')
     
-    if (authHeader !== `Bearer ${process.env.CRON_SECRET || 'dev_secret'}`) {
+    const isDev = user ? await isDevAccount(supabase, user.id) : false
+    const isCronAuth = authHeader === `Bearer ${process.env.CRON_SECRET || 'dev_secret'}`
+    
+    if (!isCronAuth && !isDev) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
@@ -94,9 +107,9 @@ export async function POST(request: NextRequest) {
       date: targetDate,
       challenges: insertedChallenges,
     })
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Challenge generation error:', error)
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    return NextResponse.json({ error: error instanceof Error ? error.message : 'Unknown error' }, { status: 500 })
   }
 }
 

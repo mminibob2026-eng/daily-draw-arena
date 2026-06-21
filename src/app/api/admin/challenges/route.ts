@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { CHALLENGE_BANK } from '@/lib/challenges'
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -12,7 +12,7 @@ async function isDevAccount(supabase: SupabaseClient, userId: string): Promise<b
   return profile?.is_dev_account === true
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
@@ -25,10 +25,25 @@ export async function GET() {
       return NextResponse.json({ error: 'Dev account only' }, { status: 403 })
     }
 
-    const { data: challengeBank, error } = await supabase
+    const { searchParams } = new URL(request.url)
+    const page = parseInt(searchParams.get('page') || '1')
+    const limit = parseInt(searchParams.get('limit') || '20')
+    const search = searchParams.get('search') || ''
+    const filter = searchParams.get('filter') || 'all'
+
+    const offset = (page - 1) * limit
+
+    let query = supabase
       .from('challenge_bank')
-      .select('*')
+      .select('*', { count: 'exact' })
+
+    if (search) {
+      query = query.or(`title.ilike.%${search}%,description.ilike.%${search}%`)
+    }
+
+    const { data: challengeBank, error, count } = await query
       .order('created_at', { ascending: true })
+      .range(offset, offset + limit - 1)
 
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 })
@@ -40,7 +55,7 @@ export async function GET() {
 
     const usedTitles = new Set(usedChallenges?.map(c => c.title) || [])
 
-    const challenges = challengeBank.map(c => {
+    let challenges = challengeBank?.map(c => {
       const usages = usedChallenges?.filter(u => u.title === c.title) || []
       return {
         ...c,
@@ -48,14 +63,34 @@ export async function GET() {
         lastUsed: usages.length > 0 ? usages[usages.length - 1].challenge_date : null,
         usageCount: usages.length,
       }
-    })
+    }) || []
+
+    if (filter === 'enabled') {
+      challenges = challenges.filter(c => c.is_enabled && !c.used)
+    } else if (filter === 'disabled') {
+      challenges = challenges.filter(c => !c.is_enabled)
+    } else if (filter === 'used') {
+      challenges = challenges.filter(c => c.used)
+    }
+
+    const totalCount = count || 0
+    const totalPages = Math.ceil(totalCount / limit)
 
     return NextResponse.json({ 
       challenges,
-      total: challenges.length,
-      used: challenges.filter(c => c.used).length,
-      available: challenges.filter(c => !c.used && c.is_enabled).length,
-      disabled: challenges.filter(c => !c.is_enabled).length,
+      pagination: {
+        page,
+        limit,
+        total: totalCount,
+        totalPages,
+        hasMore: page < totalPages,
+      },
+      stats: {
+        total: totalCount,
+        used: challenges.filter(c => c.used).length,
+        available: challenges.filter(c => !c.used && c.is_enabled).length,
+        disabled: challenges.filter(c => !c.is_enabled).length,
+      }
     })
   } catch (error: unknown) {
     return NextResponse.json({ error: error instanceof Error ? error.message : 'Unknown error' }, { status: 500 })

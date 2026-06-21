@@ -4,12 +4,21 @@ import Link from 'next/link'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { GenerateButton } from '@/components/generate-button'
 
 export default async function ChallengesPage() {
   const supabase = await createClient()
   const today = getChallengeDate()
 
   const { data: { user } } = await supabase.auth.getUser()
+
+  const { data: profile } = user
+    ? await supabase
+        .from('profiles')
+        .select('is_dev_account')
+        .eq('id', user.id)
+        .single()
+    : { data: null }
 
   const { data: challenges } = await supabase
     .from('daily_challenges')
@@ -35,9 +44,14 @@ export default async function ChallengesPage() {
             {user ? "Choose a challenge and create your masterpiece" : "Sign in to start drawing!"}
           </p>
         </div>
-        <Badge variant="outline" className="text-sm">
-          Resets at midnight MYT
-        </Badge>
+        <div className="flex items-center gap-4">
+          {profile?.is_dev_account && !challenges?.length && (
+            <GenerateButton date={today} />
+          )}
+          <Badge variant="outline" className="text-sm">
+            Resets at midnight MYT
+          </Badge>
+        </div>
       </div>
 
       {!challenges?.length ? (
