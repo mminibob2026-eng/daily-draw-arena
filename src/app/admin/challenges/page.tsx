@@ -1,14 +1,192 @@
-import { createClient } from '@/lib/supabase/server'
-import { notFound } from 'next/navigation'
+'use client'
+
+import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { CHALLENGE_BANK } from '@/lib/challenges'
+import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
+import { Switch } from '@/components/ui/switch'
+import { Label } from '@/components/ui/label'
+import { useAuth } from '@/contexts/auth-context'
 
-export default async function AdminChallengesPage() {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+interface Challenge {
+  id: string
+  title: string
+  description: string
+  is_enabled: boolean
+  source: string
+  created_by: string | null
+  used: boolean
+  lastUsed: string | null
+  usageCount: number
+}
+
+export default function AdminChallengesPage() {
+  const { user, profile } = useAuth()
+  const [challenges, setChallenges] = useState<Challenge[]>([])
+  const [loading, setLoading] = useState(true)
+  const [stats, setStats] = useState({ total: 0, used: 0, available: 0, disabled: 0 })
+  const [showAddForm, setShowAddForm] = useState(false)
+  const [newChallenge, setNewChallenge] = useState({ title: '', description: '' })
+  const [addingChallenge, setAddingChallenge] = useState(false)
+  const [error, setError] = useState('')
+  const [seeding, setSeeding] = useState(false)
+  const [seedingMsg, setSeedingMsg] = useState('')
+
+  useEffect(() => {
+    async function load() {
+      try {
+        const res = await fetch('/api/admin/challenges')
+        const data = await res.json()
+        
+        if (res.ok) {
+          setChallenges(data.challenges || [])
+          setStats({
+            total: data.total || 0,
+            used: data.used || 0,
+            available: data.available || 0,
+            disabled: data.disabled || 0,
+          })
+          
+          if (data.total === 0) {
+            setSeedingMsg('Challenge bank is empty. Click "Seed Bank" to populate it.')
+          }
+        } else {
+          setError(data.error || 'Failed to fetch challenges')
+        }
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : 'Unknown error')
+      } finally {
+        setLoading(false)
+      }
+    }
+    load()
+  }, [])
+
+  async function handleSeed() {
+    setSeeding(true)
+    setError('')
+    setSeedingMsg('Seeding...')
+    
+    try {
+      const res = await fetch('/api/admin/challenges', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'seed' }),
+      })
+      const data = await res.json()
+      
+      if (res.ok) {
+        setSeedingMsg(data.message)
+        setTimeout(async () => {
+          setSeedingMsg('')
+          try {
+            const refreshRes = await fetch('/api/admin/challenges')
+            const refreshData = await refreshRes.json()
+            if (refreshRes.ok) {
+              setChallenges(refreshData.challenges || [])
+              setStats({
+                total: refreshData.total || 0,
+                used: refreshData.used || 0,
+                available: refreshData.available || 0,
+                disabled: refreshData.disabled || 0,
+              })
+            }
+          } catch {
+            // silently fail
+          }
+        }, 1500)
+      } else {
+        setError(data.error || 'Failed to seed')
+        setSeedingMsg('')
+      }
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Unknown error')
+      setSeedingMsg('')
+    } finally {
+      setSeeding(false)
+    }
+  }
+
+  async function handleToggle(challenge: Challenge) {
+    const newEnabled = !challenge.is_enabled
+    
+    setChallenges(prev => prev.map(c => 
+      c.id === challenge.id ? { ...c, is_enabled: newEnabled } : c
+    ))
+    
+    try {
+      const res = await fetch('/api/admin/challenges', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: challenge.id, is_enabled: newEnabled }),
+      })
+      
+      if (!res.ok) {
+        setChallenges(prev => prev.map(c => 
+          c.id === challenge.id ? { ...c, is_enabled: !newEnabled } : c
+        ))
+        setError('Failed to update challenge')
+      }
+    } catch {
+      setChallenges(prev => prev.map(c => 
+        c.id === challenge.id ? { ...c, is_enabled: !newEnabled } : c
+      ))
+      setError('Failed to update challenge')
+    }
+  }
+
+  async function handleAddChallenge(e: React.FormEvent) {
+    e.preventDefault()
+    setAddingChallenge(true)
+    setError('')
+    
+    try {
+      const res = await fetch('/api/admin/challenges', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'add', ...newChallenge }),
+      })
+      const data = await res.json()
+      
+      if (res.ok) {
+        setChallenges(prev => [...prev, { ...data.challenge, used: false, lastUsed: null, usageCount: 0 }])
+        setNewChallenge({ title: '', description: '' })
+        setShowAddForm(false)
+        setStats(prev => ({ ...prev, total: prev.total + 1, available: prev.available + 1 }))
+      } else {
+        setError(data.error || 'Failed to add challenge')
+      }
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setAddingChallenge(false)
+    }
+  }
+
+  async function handleDelete(id: string) {
+    if (!confirm('Delete this custom challenge?')) return
+    
+    try {
+      const res = await fetch(`/api/admin/challenges?id=${id}`, { method: 'DELETE' })
+      
+      if (res.ok) {
+        setChallenges(prev => prev.filter(c => c.id !== id))
+        setStats(prev => ({ 
+          ...prev, 
+          total: prev.total - 1,
+          available: prev.available > 0 ? prev.available - 1 : prev.available,
+        }))
+      } else {
+        const data = await res.json()
+        setError(data.error || 'Failed to delete')
+      }
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Unknown error')
+    }
+  }
 
   if (!user) {
     return (
@@ -30,12 +208,6 @@ export default async function AdminChallengesPage() {
     )
   }
 
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('is_dev_account')
-    .eq('id', user.id)
-    .single()
-
   if (!profile?.is_dev_account) {
     return (
       <div className="container py-8">
@@ -56,30 +228,6 @@ export default async function AdminChallengesPage() {
     )
   }
 
-  const { data: usedChallenges } = await supabase
-    .from('daily_challenges')
-    .select('title, challenge_date')
-
-  const usedTitles = new Set(usedChallenges?.map(c => c.title) || [])
-
-  const challenges = CHALLENGE_BANK.map((c, i) => {
-    const usages = usedChallenges?.filter(u => u.title === c.title) || []
-    return {
-      id: i + 1,
-      title: c.title,
-      description: c.description,
-      used: usedTitles.has(c.title),
-      lastUsed: usages.length > 0 ? usages[usages.length - 1].challenge_date : null,
-      usageCount: usages.length,
-    }
-  })
-
-  const stats = {
-    total: challenges.length,
-    used: challenges.filter(c => c.used).length,
-    available: challenges.filter(c => !c.used).length,
-  }
-
   return (
     <div className="container py-8">
       <div className="max-w-6xl mx-auto">
@@ -92,71 +240,176 @@ export default async function AdminChallengesPage() {
             <Badge variant="secondary">Dev Only</Badge>
           </div>
           <p className="text-muted-foreground mt-1">
-            Review all {CHALLENGE_BANK.length} approved challenge subjects
+            Manage challenge subjects for Daily Draw Arena
           </p>
         </div>
 
-        <div className="grid grid-cols-3 gap-4 mb-8">
+        {error && (
+          <Card className="mb-4 border-destructive">
+            <CardContent className="py-3 text-center text-destructive text-sm">
+              {error}
+            </CardContent>
+          </Card>
+        )}
+
+        {seedingMsg && (
+          <Card className="mb-4 border-primary">
+            <CardContent className="py-3 text-center text-sm">
+              {seedingMsg}
+            </CardContent>
+          </Card>
+        )}
+
+        <div className="grid grid-cols-4 gap-4 mb-8">
           <Card>
             <CardContent className="py-4 text-center">
               <p className="text-3xl font-bold">{stats.total}</p>
-              <p className="text-sm text-muted-foreground">Total Challenges</p>
+              <p className="text-sm text-muted-foreground">Total</p>
             </CardContent>
           </Card>
           <Card className="bg-primary/5 border-primary/20">
             <CardContent className="py-4 text-center">
-              <p className="text-3xl font-bold text-primary">{stats.used}</p>
+              <p className="text-3xl font-bold text-primary">{stats.available}</p>
+              <p className="text-sm text-muted-foreground">Enabled</p>
+            </CardContent>
+          </Card>
+          <Card className="bg-muted/50">
+            <CardContent className="py-4 text-center">
+              <p className="text-3xl font-bold">{stats.disabled}</p>
+              <p className="text-sm text-muted-foreground">Disabled</p>
+            </CardContent>
+          </Card>
+          <Card className="bg-warning/5 border-warning/20">
+            <CardContent className="py-4 text-center">
+              <p className="text-3xl font-bold text-warning">{stats.used}</p>
               <p className="text-sm text-muted-foreground">Used</p>
             </CardContent>
           </Card>
-          <Card className="bg-success/5 border-success/20">
-            <CardContent className="py-4 text-center">
-              <p className="text-3xl font-bold text-success">{stats.available}</p>
-              <p className="text-sm text-muted-foreground">Available</p>
+        </div>
+
+        <div className="flex gap-4 mb-6">
+          {stats.total === 0 ? (
+            <Button onClick={handleSeed} disabled={seeding}>
+              {seeding ? 'Seeding...' : 'Seed Challenge Bank'}
+            </Button>
+          ) : (
+            <Button variant="outline" onClick={() => setShowAddForm(!showAddForm)}>
+              {showAddForm ? 'Cancel' : '+ Add Custom Challenge'}
+            </Button>
+          )}
+        </div>
+
+        {showAddForm && (
+          <Card className="mb-6">
+            <CardHeader>
+              <CardTitle>Add Custom Challenge</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={handleAddChallenge} className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="title">Title</Label>
+                  <Input
+                    id="title"
+                    value={newChallenge.title}
+                    onChange={e => setNewChallenge(prev => ({ ...prev, title: e.target.value }))}
+                    placeholder="Challenge title"
+                    required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="description">Description</Label>
+                  <Textarea
+                    id="description"
+                    value={newChallenge.description}
+                    onChange={e => setNewChallenge(prev => ({ ...prev, description: e.target.value }))}
+                    placeholder="Describe the challenge..."
+                    required
+                  />
+                </div>
+                <Button type="submit" disabled={addingChallenge}>
+                  {addingChallenge ? 'Adding...' : 'Add Challenge'}
+                </Button>
+              </form>
             </CardContent>
           </Card>
-        </div>
+        )}
 
-        <Card>
-          <CardContent className="py-4 text-center">
-            <p className="text-sm text-muted-foreground">
-              {stats.used} challenges have been used and won&apos;t repeat for 30 days per user
-            </p>
-          </CardContent>
-        </Card>
-
-        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4 mt-6">
-          {challenges.map((challenge) => (
-            <Card 
-              key={challenge.id} 
-              className={challenge.used ? 'opacity-75' : 'border-success/30'}
-            >
-              <CardHeader className="pb-2">
-                <div className="flex items-start justify-between gap-2">
-                  <CardTitle className="text-base">{challenge.title}</CardTitle>
-                  {challenge.used ? (
-                    <Badge variant="secondary" className="text-xs">Used</Badge>
-                  ) : (
-                    <Badge variant="success" className="text-xs">Available</Badge>
-                  )}
-                </div>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-muted-foreground mb-3">
-                  {challenge.description}
-                </p>
-                {challenge.used && (
-                  <div className="text-xs text-muted-foreground">
-                    <span>Used {challenge.usageCount}x</span>
-                    {challenge.lastUsed && (
-                      <span> · Last: {challenge.lastUsed}</span>
+        {loading ? (
+          <Card>
+            <CardContent className="py-12 text-center">
+              <p className="text-muted-foreground">Loading...</p>
+            </CardContent>
+          </Card>
+        ) : challenges.length === 0 ? (
+          <Card>
+            <CardContent className="py-12 text-center">
+              <p className="text-muted-foreground">No challenges in the bank.</p>
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {challenges.map((challenge) => (
+              <Card 
+                key={challenge.id} 
+                className={`
+                  ${!challenge.is_enabled ? 'opacity-60' : ''}
+                  ${challenge.used ? 'border-muted-foreground/20' : 'border-success/30'}
+                `}
+              >
+                <CardHeader className="pb-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <CardTitle className="text-base leading-tight">{challenge.title}</CardTitle>
+                    <div className="flex items-center gap-2">
+                      {challenge.source === 'custom' && (
+                        <Badge variant="outline" className="text-xs">Custom</Badge>
+                      )}
+                      {challenge.used ? (
+                        <Badge variant="secondary" className="text-xs">Used</Badge>
+                      ) : (
+                        <Badge variant="success" className="text-xs">New</Badge>
+                      )}
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-sm text-muted-foreground mb-3">
+                    {challenge.description}
+                  </p>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Switch
+                        checked={challenge.is_enabled}
+                        onCheckedChange={() => handleToggle(challenge)}
+                        id={`toggle-${challenge.id}`}
+                      />
+                      <Label htmlFor={`toggle-${challenge.id}`} className="text-xs cursor-pointer">
+                        {challenge.is_enabled ? 'Enabled' : 'Disabled'}
+                      </Label>
+                    </div>
+                    {challenge.source === 'custom' && (
+                      <Button 
+                        variant="ghost" 
+                        size="sm" 
+                        className="text-destructive hover:text-destructive"
+                        onClick={() => handleDelete(challenge.id)}
+                      >
+                        Delete
+                      </Button>
                     )}
                   </div>
-                )}
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+                  {challenge.used && (
+                    <div className="text-xs text-muted-foreground mt-2">
+                      <span>Used {challenge.usageCount}x</span>
+                      {challenge.lastUsed && (
+                        <span> · Last: {challenge.lastUsed}</span>
+                      )}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )
