@@ -185,3 +185,22 @@ CREATE POLICY "ai_generated_upload_all" ON storage.objects
 DROP POLICY IF EXISTS "Anyone can read ai-generated" ON storage.objects;
 CREATE POLICY "ai_generated_read_all" ON storage.objects
   FOR SELECT USING (bucket_id = 'ai-generated');
+
+-- ============================================
+-- CHALLENGE_BANK DEDUPLICATION & UNIQUE TITLE
+-- ============================================
+
+-- Remove any duplicate titles that may have been created by repeated seeds,
+-- keeping the oldest row for each title.
+DELETE FROM public.challenge_bank a
+USING public.challenge_bank b
+WHERE a.id <> b.id
+  AND a.title = b.title
+  AND (
+    a.created_at > b.created_at
+    OR (a.created_at = b.created_at AND a.id > b.id)
+  );
+
+-- Prevent future duplicate titles.
+ALTER TABLE public.challenge_bank
+  ADD CONSTRAINT challenge_bank_title_unique UNIQUE (title);

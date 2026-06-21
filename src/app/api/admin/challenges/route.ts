@@ -152,14 +152,16 @@ export async function POST(request: Request) {
         created_by: null,
       }))
 
+      // Upsert with ignoreDuplicates so re-seeding is idempotent and cannot
+      // create duplicate titles once the UNIQUE(title) constraint is in place.
       const { error } = await supabase
         .from('challenge_bank')
-        .insert(challengesToInsert)
+        .upsert(challengesToInsert, {
+          onConflict: 'title',
+          ignoreDuplicates: true,
+        })
 
       if (error) {
-        if (error.code === '23505') {
-          return NextResponse.json({ message: 'Challenge bank already seeded', seeded: false })
-        }
         return NextResponse.json({ error: error.message }, { status: 500 })
       }
 
